@@ -18,7 +18,6 @@ use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use TYPO3\CMS\Backend\Controller\Event\ModifyPageLayoutContentEvent;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Page\PageRenderer;
 
 // ModifyPageLayoutContentEvent is identical on v13 and v14, and everything used
@@ -35,7 +34,9 @@ use TYPO3\CMS\Core\Page\PageRenderer;
 //   embedded here as JSON and main.js (loaded below) injects them into the
 //   matching content element's header client-side. No extra request - the data
 //   is already loaded server-side via AiMetadataRecordFinder.
-#[AsEventListener(identifier: 'ai-label/mark-flagged-page-in-layout')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - see AddAiMetaFieldsToTca for why.
 final class MarkFlaggedPageInLayoutModule
 {
     public function __construct(

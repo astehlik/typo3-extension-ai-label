@@ -6,7 +6,14 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
 (integrator) documentation, especially the Frontend Integration section.
 
 - Extension key `ai_label`, composer package `b13/ai-label`, PHP namespace `B13\AiLabel`
-- Must work on **both TYPO3 v13.4 and v14.3+** - this drives most of the architecture below
+- Must work on **TYPO3 v12.4, v13.4, and v14.3+** - this drives most of the architecture
+  below. v12 support was added later, on top of the existing v13/v14 split (see
+  "v13/v14 compatibility architecture"): wherever v12's API shape matches v13's, the
+  existing `Classes/Legacy/` class is reused as-is (its `Typo3Version` guard already
+  says "not v14", which is true for v12 too) - the only genuinely new v12-only work was
+  for APIs that don't exist on v12 at all (`TcaSchemaFactory`, the `#[AsEventListener]`
+  attribute, `IconSize`), see "Known version-safe APIs" and "PSR-14 listener
+  registration" below.
 - `require`: `typo3/cms-backend`, `typo3/cms-frontend` (hard dependency - see "Optional
   dependencies" below for why). `typo3/cms-filelist`, `typo3/cms-workspaces`, and
   `typo3/cms-fluid-styled-content` are `require-dev` only.
@@ -79,9 +86,11 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
   already reviewed must still reset it. See `AiMetaDataHandlerHookTest` for the exact
   scenarios this covers.
 - `hasRelevantContentChange()` filters out `ctrl.tstamp`, the language-diff-source field,
-  and any field with `config.MM` before deciding whether anything actually changed -
-  via `TcaSchemaFactory`/`TcaSchemaCapability` (identical API on v13.4 and v14, verified),
-  not raw `$GLOBALS['TCA']` array access.
+  and any field with `config.MM` before deciding whether anything actually changed - via
+  raw `$GLOBALS['TCA']` array access, not `TcaSchemaFactory`/`TcaSchemaCapability` (that
+  API doesn't exist before v13, and this class must also work on v12 - see "Known
+  version-safe APIs"). Same for `AiMetadataRecordFinder`'s workspace-capability check
+  (`ctrl.versioningWS` directly instead of `TcaSchemaCapability::Workspace`).
 - `reviewed_timestamp` comes from `Context`'s `date` aspect
   (`getPropertyFromAspect('date', 'timestamp')`), not `$GLOBALS['EXEC_TIME']`/`time()`
   directly - it's the same underlying value, just the idiomatic accessor. Tests freeze
@@ -89,8 +98,8 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
   Context's date aspect (it lazily caches on first access).
 - This hook is instantiated by DataHandler's legacy `processDatamapClass` mechanism
   (`GeneralUtility::makeInstance()`, not full DI) - it needs `#[Autoconfigure(public: true)]`
-  or autowiring silently fails to inject its dependencies (`Context`, `TcaSchemaFactory`,
-  `AiLabelApi`). **The rule only bites when there's actually a constructor to autowire**:
+  or autowiring silently fails to inject its dependencies (`Context`, `AiLabelApi`).
+  **The rule only bites when there's actually a constructor to autowire**:
   `AiLabelProcessor`/`RecordMetadataViewHelper`/`FileMetadataViewHelper` are also
   instantiated the same way (Fluid's `ViewHelperResolver`/TYPO3 Frontend's
   `ContentDataProcessor`, both via plain `GeneralUtility::makeInstance()`), but none of
@@ -133,6 +142,15 @@ with the inverse guard (`>= 14`). This means the whole `Classes/Legacy/` directo
 just be deleted once v13 support is dropped. `Classes/Legacy/` is excluded from
 phpstan (`Build/phpstan.neon`).
 
+**v12 support reuses this same split, it does not add a third branch.** v12's event/API
+shape for everything currently split (`ModifyRecordListRecordActionsEvent`,
+`ProcessFileListActionsEvent`, no `ComponentFactory`) matches v13's exactly (verified
+against the actual v12.4.48 vendor source) - so the existing `< 14` guard already routes
+v12 through the same `Classes/Legacy/` class v13 uses, with no code change needed there.
+Only add a real three-way branch if a future v12-specific divergence is found; check the
+actual installed vendor source for that TYPO3 major first, don't assume v12 needs its
+own path.
+
 **Only do this when there's an actual API difference.** Several classes that originally
 had this split were later merged back into one version-agnostic class once it turned out
 nothing version-specific remained (e.g. `MarkFlaggedPageInLayoutModule` - `getBadge()`
@@ -141,12 +159,24 @@ versions). Always check first whether the split is still needed before adding on
 
 Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`,
 lazily via `GeneralUtility::makeInstance()` since it can't be constructor-injected - this
-class is instantiated on both versions; v13 `createButtonHtml()` builds raw HTML),
+class is instantiated on all three versions; v12/v13 `createButtonHtml()` builds raw
+HTML, and further branches internally on `Typo3Version` for the icon-size argument alone,
+since `IconSize` the enum doesn't exist before v13 either),
 `MarkFlaggedRecordsInRecordList`, `MarkFlaggedFilesInFileList` (their v13/v14 event
 classes have the same name but different constructors/methods).
 
+PSR-14 listeners (`AddAiMetaFieldsToTca`, `AddAiMetadataToRecordListQuery`,
+`AfterFileContentChangedListener`, `MarkFlaggedPageInLayoutModule`, and both
+`MarkFlaggedRecordsInRecordList`/`MarkFlaggedFilesInFileList` pairs) are registered via
+explicit `event.listener` tags in `Configuration/Services.yaml`, **not** the
+`#[AsEventListener]` PHP attribute - that attribute class doesn't exist before v13. The
+underlying `event.listener` Services.yaml tag it compiles down to is identical on
+v12/v13/v14, so this is the one true registration mechanism, not a v12-only add-on -
+don't add `#[AsEventListener]` back even for the v14-only classes, or v13/v14 will
+register them twice (once via the attribute, once via the explicit tag).
+
 Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
-`TcaSchemaFactory`/`TcaSchemaCapability`, `BackendUtility::workspaceOL()`,
+`BackendUtility::workspaceOL()`,
 `RecordFactory`/`RecordInterface`, `Context`, `ModifyPageLayoutContentEvent`,
 `RecordTransformationProcessor` ("record-transformation" DataProcessor).
 
@@ -348,6 +378,12 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   ```
   php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan13.neon
   ```
+  **No `Build/phpstan12.neon`/CI matrix entry exists yet for v12** - added when v12
+  support itself was added, but a v12-targeted phpstan config + baseline (same idea as
+  the v13 one, for `Classes/`'s v14-only refs) and a `.github/workflows/ci.yml` matrix
+  entry were deliberately left as a follow-up, not done as part of that change.
+  `typo3/testing-framework` also needs `^8` for a real v12 install (`^9` only supports
+  v13/v14) - `composer.json` already allows `^8 || ^9`.
 - **CSV fixture format is easy to get wrong**: the table name must be on its own line
   (first column only), *then* a separate line with a leading empty column + field names,
   *then* data rows (leading empty column). Table name + field names on the same line

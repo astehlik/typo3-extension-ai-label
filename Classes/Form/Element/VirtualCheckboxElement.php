@@ -15,18 +15,25 @@ namespace B13\AiLabel\Form\Element;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use TYPO3\CMS\Backend\Form\Element\CheckboxToggleElement;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 // TCA type=user delegating to core's checkboxToggle rendering. DefaultTcaSchema only
 // auto-creates a database column for TCA type=check fields, never for type=user -
 // so this renders exactly like a normal checkbox toggle without ever gaining a real
 // column. AiMetaDataHandlerHook folds the submitted value into tx_ailabel_metadata
-// instead. $this->nodeFactory is inherited from AbstractFormElement (injectNodeFactory()).
+// instead. $this->nodeFactory is inherited from AbstractFormElement (injectNodeFactory()
+// on v13/v14).
+//
+// No custom constructor: on v12, NodeFactory::initializeNodeClass() instantiates every
+// node class with GeneralUtility::makeInstance($className, $nodeFactory, $data) - a
+// positional call that bypasses the DI container entirely, so a constructor declaring
+// AiMetadataBadgeFactory here would receive the NodeFactory instance instead (confirmed
+// by the resulting TypeError). AbstractFormElement's own
+// __construct(?NodeFactory $nodeFactory = null, array $data = []) has to stay
+// untouched; AiMetadataBadgeFactory is fetched lazily instead, the same way core's own
+// FormEngine elements reach for services outside their constructor.
 final class VirtualCheckboxElement extends CheckboxToggleElement
 {
-    public function __construct(private readonly AiMetadataBadgeFactory $badgeFactory)
-    {
-    }
-
     protected function wrapWithFieldsetAndLegend(string $innerHTML): string
     {
         if ($this->data['fieldName'] === 'tx_ailabel_reviewed') {
@@ -37,10 +44,11 @@ final class VirtualCheckboxElement extends CheckboxToggleElement
                 // latter meant duplicating core's legend/debug-info handling, and - on v14 -
                 // silently dropping the field's TCA "description": AbstractFormElement renders
                 // it from inside this very method there, so an override that never calls the
-                // parent swallows it. (On v13 the description arrives as part of $innerHTML
+                // parent swallows it. (On v12/v13 the description arrives as part of $innerHTML
                 // instead, via CheckboxToggleElement's "tcaDescription" fieldInformation node -
                 // hence the badge sits above the description text there and below it on v14.)
-                $innerHTML = $this->badgeFactory->getBadge($aiMetadata) . chr(10) . $innerHTML;
+                $badgeFactory = GeneralUtility::makeInstance(AiMetadataBadgeFactory::class);
+                $innerHTML = $badgeFactory->getBadge($aiMetadata) . chr(10) . $innerHTML;
             }
         }
         return parent::wrapWithFieldsetAndLegend($innerHTML);

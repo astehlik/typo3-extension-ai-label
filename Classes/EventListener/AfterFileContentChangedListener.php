@@ -15,7 +15,6 @@ namespace B13\AiLabel\EventListener;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Service\AiLabelApi;
 use Psr\Http\Message\ServerRequestInterface;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Http\ApplicationType;
 use TYPO3\CMS\Core\Localization\LanguageService;
@@ -43,8 +42,10 @@ use TYPO3\CMS\Core\Type\ContextualFeedbackSeverity;
 //
 // Backend-only: neither event carries a request, and a CLI/frontend-triggered change
 // (e.g. a scheduler task) has no editor to notify or attribute the review-reset to.
-#[AsEventListener(identifier: 'ai-label/after-file-replaced', event: AfterFileReplacedEvent::class)]
-#[AsEventListener(identifier: 'ai-label/after-file-contents-set', event: AfterFileContentsSetEvent::class)]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag,
+// two entries - one per event class), not the #[AsEventListener] attribute - see
+// AddAiMetaFieldsToTca for why.
 final class AfterFileContentChangedListener
 {
     public function __construct(

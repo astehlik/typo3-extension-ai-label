@@ -19,8 +19,6 @@ use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
-use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
-use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 
 // Folds tx_ailabel_origin / tx_ailabel_reviewed into the tx_ailabel_metadata JSON
 // column (a real type=json TCA column added by AddAiMetaFieldsToTca, never part of
@@ -55,7 +53,6 @@ final class AiMetaDataHandlerHook
 
     public function __construct(
         private readonly Context $context,
-        private readonly TcaSchemaFactory $tcaSchemaFactory,
         private readonly AiLabelApi $aiLabelApi,
     ) {
     }
@@ -194,22 +191,23 @@ final class AiMetaDataHandlerHook
      */
     private function hasRelevantContentChange(string $table, array $fieldArray): bool
     {
-        $schema = $this->tcaSchemaFactory->get($table);
+        // Raw $GLOBALS['TCA'] access instead of TcaSchemaFactory/TcaSchemaCapability -
+        // that API doesn't exist before TYPO3 v13, and this extension must also run on
+        // v12. Same underlying data either way; ctrl.tstamp/ctrl.transOrigDiffSourceField
+        // and columns.<field>.config.MM are stable across v12/v13/v14.
+        $tcaCtrl = $GLOBALS['TCA'][$table]['ctrl'] ?? [];
+        $tcaColumns = $GLOBALS['TCA'][$table]['columns'] ?? [];
 
         $ignoredFields = array_filter([
-            $schema->hasCapability(TcaSchemaCapability::UpdatedAt)
-                ? $schema->getCapability(TcaSchemaCapability::UpdatedAt)->getFieldName()
-                : null,
-            $schema->hasCapability(TcaSchemaCapability::Language)
-                ? $schema->getCapability(TcaSchemaCapability::Language)->getDiffSourceField()?->getName()
-                : null,
+            $tcaCtrl['tstamp'] ?? null,
+            $tcaCtrl['transOrigDiffSourceField'] ?? null,
         ]);
 
         foreach ($fieldArray as $field => $value) {
             if (in_array($field, $ignoredFields, true)) {
                 continue;
             }
-            $fieldConfig = $schema->hasField($field) ? $schema->getField($field)->getConfiguration() : [];
+            $fieldConfig = $tcaColumns[$field]['config'] ?? [];
             if (!empty($fieldConfig['MM'])) {
                 continue;
             }

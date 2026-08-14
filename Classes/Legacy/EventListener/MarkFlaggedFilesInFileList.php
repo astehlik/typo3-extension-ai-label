@@ -16,7 +16,6 @@ use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Information\Typo3Version;
 use TYPO3\CMS\Core\Resource\File;
 use TYPO3\CMS\Filelist\Event\ProcessFileListActionsEvent;
@@ -29,7 +28,10 @@ use TYPO3\CMS\Filelist\Event\ProcessFileListActionsEvent;
 // ProcessFileListActionsEvent just works with a plain actionItems array of raw
 // HTML strings here, instead of setAction()/ComponentInterface there - the
 // early return below is the only thing telling them apart at runtime.
-#[AsEventListener(identifier: 'ai-label/legacy-mark-flagged-files-in-filelist')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - see the v14+ class for why. On v12 this is
+// the class whose __invoke() actually runs (its event shape matches v13's).
 final class MarkFlaggedFilesInFileList
 {
     public function __construct(

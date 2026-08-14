@@ -17,7 +17,6 @@ use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use TYPO3\CMS\Backend\RecordList\Event\ModifyRecordListRecordActionsEvent;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Template\Components\ActionGroup;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Information\Typo3Version;
 
 // TYPO3 v14+ only - ModifyRecordListRecordActionsEvent::setAction() requires a
@@ -29,7 +28,11 @@ use TYPO3\CMS\Core\Information\Typo3Version;
 // Marks records flagged as AI-created/AI-modified in the Web > List module's action
 // column, the same place edit/copy/delete live - similar to how the
 // localize-metadata button appears in the file list.
-#[AsEventListener(identifier: 'ai-label/mark-flagged-records-in-list')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - that mechanism doesn't exist on v12, which this
+// extension must also support. On v12 the guard below means __invoke() is a no-op, but
+// the class still has to be tagged so it keeps firing on v13/v14.
 final class MarkFlaggedRecordsInRecordList
 {
     public function __construct(

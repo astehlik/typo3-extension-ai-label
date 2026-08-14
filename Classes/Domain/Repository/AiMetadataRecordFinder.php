@@ -20,10 +20,7 @@ use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
-use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
-use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Core\Versioning\VersionState;
 
 // Collects records across the applicable tables whose tx_ailabel_metadata marks them
 // as flagged (AI-created or AI-modified). Not an Extbase repository, no persistence layer in
@@ -43,7 +40,6 @@ final class AiMetadataRecordFinder
         private readonly ApplicableTablesProvider $applicableTablesProvider,
         private readonly AiMetadataBadgeFactory $badgeFactory,
         private readonly Context $context,
-        private readonly TcaSchemaFactory $tcaSchemaFactory,
     ) {
     }
 
@@ -77,8 +73,10 @@ final class AiMetadataRecordFinder
     private function findFlaggedRecordsForTable(string $table, ?int $pid): array
     {
         $workspaceId = (int)$this->context->getPropertyFromAspect('workspace', 'id');
-        $isVersionable = $this->tcaSchemaFactory->has($table)
-            && $this->tcaSchemaFactory->get($table)->hasCapability(TcaSchemaCapability::Workspace);
+        // Raw $GLOBALS['TCA'] access instead of TcaSchemaFactory/TcaSchemaCapability -
+        // that API doesn't exist before TYPO3 v13, and this extension must also run on
+        // v12. ctrl.versioningWS is the exact same underlying flag that capability wraps.
+        $isVersionable = (bool)($GLOBALS['TCA'][$table]['ctrl']['versioningWS'] ?? false);
 
         $records = [];
 
@@ -89,7 +87,12 @@ final class AiMetadataRecordFinder
                     // Moved away in this workspace - see workspaceOL()'s $unsetMovePointers.
                     continue;
                 }
-                if (VersionState::tryFrom($row['t3ver_state'] ?? 0) === VersionState::DELETE_PLACEHOLDER) {
+                // Raw int (2) instead of VersionState::DELETE_PLACEHOLDER - VersionState is a
+                // native backed enum on v13/v14 (::DELETE_PLACEHOLDER->value) but TYPO3's older
+                // Enumeration-based class on v12 (::DELETE_PLACEHOLDER already a plain int, no
+                // ->value, no ::tryFrom()) - same underlying t3ver_state value either way, and
+                // this is TYPO3's own stable, long-lived DB schema constant.
+                if ((int)($row['t3ver_state'] ?? 0) === 2) {
                     // Deleted in this workspace - would disappear on publish, don't list it.
                     continue;
                 }
@@ -151,7 +154,9 @@ final class AiMetadataRecordFinder
             ->where(
                 $queryBuilder->expr()->isNotNull('tx_ailabel_metadata'),
                 $queryBuilder->expr()->eq('t3ver_wsid', $queryBuilder->createNamedParameter($workspaceId, Connection::PARAM_INT)),
-                $queryBuilder->expr()->eq('t3ver_state', $queryBuilder->createNamedParameter(VersionState::NEW_PLACEHOLDER->value, Connection::PARAM_INT))
+                // Raw int (1) instead of VersionState::NEW_PLACEHOLDER->value - see the
+                // DELETE_PLACEHOLDER comment above for why.
+                $queryBuilder->expr()->eq('t3ver_state', $queryBuilder->createNamedParameter(1, Connection::PARAM_INT))
             );
 
         if ($pid !== null) {

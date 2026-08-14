@@ -14,7 +14,6 @@ namespace B13\AiLabel\EventListener;
 
 use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use TYPO3\CMS\Backend\View\Event\ModifyDatabaseQueryForRecordListingEvent;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 
 // DatabaseRecordList::getFieldsToSelect() only builds its SELECT list from the
 // visible showitem columns plus a fixed set of ctrl-capability fields (uid, pid,
@@ -24,7 +23,9 @@ use TYPO3\CMS\Core\Attribute\AsEventListener;
 // never selected on its own even though it's TCA-registered now. This adds it to the
 // actual query explicitly before it runs, so MarkFlaggedRecordsInRecordList can
 // read it without an extra query per row.
-#[AsEventListener(identifier: 'ai-label/add-ai-metadata-to-record-list-query')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - see AddAiMetaFieldsToTca for why.
 final class AddAiMetadataToRecordListQuery
 {
     public function __construct(private readonly ApplicableTablesProvider $applicableTablesProvider)

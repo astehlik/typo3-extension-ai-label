@@ -13,3 +13,43 @@ services:
   B13\AiLabel\DataProcessing\AiLabelProcessor:
     tags:
       - { name: 'data.processor', identifier: 'ai-label' }
+
+  # PSR-14 listeners are wired up explicitly here, not via the #[AsEventListener] PHP
+  # attribute - that attribute-based registration mechanism doesn't exist before
+  # TYPO3 v13, and this extension must also run on v12. The event.listener tag itself
+  # is identical on v12/v13/v14, so this works uniformly across all of them. The v14
+  # and Legacy/v13 pairs (MarkFlaggedRecordsInRecordList, MarkFlaggedFilesInFileList)
+  # are both tagged - each is a no-op on the TYPO3 major version it doesn't target,
+  # via its own Typo3Version guard.
+  B13\AiLabel\EventListener\AddAiMetaFieldsToTca:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/add-ai-meta-fields-to-tca' }
+
+  B13\AiLabel\EventListener\AddAiMetadataToRecordListQuery:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/add-ai-metadata-to-record-list-query' }
+
+  B13\AiLabel\EventListener\AfterFileContentChangedListener:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/after-file-replaced', event: 'TYPO3\CMS\Core\Resource\Event\AfterFileReplacedEvent' }
+      - { name: 'event.listener', identifier: 'ai-label/after-file-contents-set', event: 'TYPO3\CMS\Core\Resource\Event\AfterFileContentsSetEvent' }
+
+  B13\AiLabel\EventListener\MarkFlaggedPageInLayoutModule:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/mark-flagged-page-in-layout' }
+
+  B13\AiLabel\EventListener\MarkFlaggedRecordsInRecordList:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/mark-flagged-records-in-list' }
+
+  B13\AiLabel\Legacy\EventListener\MarkFlaggedRecordsInRecordList:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/legacy-mark-flagged-records-in-list' }
+
+  B13\AiLabel\EventListener\MarkFlaggedFilesInFileList:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/mark-flagged-files-in-filelist' }
+
+  B13\AiLabel\Legacy\EventListener\MarkFlaggedFilesInFileList:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/legacy-mark-flagged-files-in-filelist' }

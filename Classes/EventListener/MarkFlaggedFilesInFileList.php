@@ -16,7 +16,6 @@ use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Template\Components\ActionGroup;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Information\Typo3Version;
 use TYPO3\CMS\Core\Resource\File;
 use TYPO3\CMS\Filelist\Event\ProcessFileListActionsEvent;
@@ -30,7 +29,11 @@ use TYPO3\CMS\Filelist\Event\ProcessFileListActionsEvent;
 // Marks files flagged as AI-created/AI-modified in the File > Filelist module's
 // action column - tx_ailabel_metadata lives on sys_file_metadata, not on the file
 // itself, so it comes from the file's metadata aspect.
-#[AsEventListener(identifier: 'ai-label/mark-flagged-files-in-filelist')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - that mechanism doesn't exist on v12, which this
+// extension must also support. On v12 the guard below means __invoke() is a no-op, but
+// the class still has to be tagged so it keeps firing on v13/v14.
 final class MarkFlaggedFilesInFileList
 {
     public function __construct(

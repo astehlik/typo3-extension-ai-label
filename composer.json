@@ -1,5 +1,5 @@
 {
-    "name": "b13/ai-label",
+    "name": "b13/ai-label-12",
     "type": "typo3-cms-extension",
     "description": "AI Label - Disclose AI-generated and AI-modified content as required by Article 50 of the EU AI Act: flag records in the backend, track editorial review, and mark flagged content in the frontend.",
     "license": "GPL-2.0-or-later",
@@ -26,8 +26,8 @@
         "source": "https://github.com/b13/ai-label"
     },
     "require": {
-        "typo3/cms-backend": "^13.4 || ^14.3",
-        "typo3/cms-frontend": "^13.4 || ^14.3"
+        "typo3/cms-backend": "^12.4 || ^13.4 || ^14.3",
+        "typo3/cms-frontend": "^12.4 || ^13.4 || ^14.3"
     },
     "suggest": {
         "typo3/cms-fluid-styled-content": "Automatically renders the AI label on every content element via a DropIn/After/All.html override",
@@ -36,12 +36,12 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "require-dev": {
-        "typo3/testing-framework": "^9",
+        "typo3/testing-framework": "^8 || ^9",
         "phpstan/phpstan": "^2.1",
         "typo3/coding-standards": "^0.5.5",
-        "typo3/cms-workspaces": "^13.4 || ^14.3",
-        "typo3/cms-filelist": "^13.4 || ^14.3",
-        "typo3/cms-fluid-styled-content": "^13.4 || ^14.3"
+        "typo3/cms-workspaces": "^12.4 || ^13.4 || ^14.3",
+        "typo3/cms-filelist": "^12.4 || ^13.4 || ^14.3",
+        "typo3/cms-fluid-styled-content": "^12.4 || ^13.4 || ^14.3"
     },
     "config": {
         "vendor-dir": ".Build/vendor",

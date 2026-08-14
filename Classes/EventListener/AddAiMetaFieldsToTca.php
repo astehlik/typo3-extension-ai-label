@@ -14,7 +14,6 @@ namespace B13\AiLabel\EventListener;
 
 use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Enum\AiOrigin;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Configuration\Event\AfterTcaCompilationEvent;
 
 // Adds the "tx_ailabel_origin" select (Human/Generated/Manipulated, exclusive) to
@@ -29,7 +28,10 @@ use TYPO3\CMS\Core\Configuration\Event\AfterTcaCompilationEvent;
 // unlike the JSON keys inside the metadata column itself, which stay short
 // (origin/reviewed_by/reviewed_timestamp) since that column is entirely private to
 // this extension.
-#[AsEventListener(identifier: 'ai-label/add-ai-meta-fields-to-tca')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag)
+// rather than the #[AsEventListener] PHP attribute - that attribute-based registration
+// mechanism doesn't exist before TYPO3 v13, and this extension must also run on v12.
 final class AddAiMetaFieldsToTca
 {
     public function __construct(private readonly ApplicableTablesProvider $applicableTablesProvider)

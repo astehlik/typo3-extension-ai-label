@@ -17,7 +17,6 @@ use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\RecordList\Event\ModifyRecordListRecordActionsEvent;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
-use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Information\Typo3Version;
 
 // TYPO3 v13 only - see Classes/EventListener/MarkFlaggedRecordsInRecordList.php
@@ -29,7 +28,10 @@ use TYPO3\CMS\Core\Information\Typo3Version;
 // than v14's (plain row array + string setAction() here, vs. RecordInterface +
 // ComponentInterface there) - the early return below is the only thing telling
 // them apart at runtime.
-#[AsEventListener(identifier: 'ai-label/legacy-mark-flagged-records-in-list')]
+//
+// Registered as a PSR-14 listener via Configuration/Services.yaml (event.listener tag),
+// not the #[AsEventListener] attribute - see the v14+ class for why. On v12 this is
+// the class whose __invoke() actually runs (its event shape matches v13's).
 final class MarkFlaggedRecordsInRecordList
 {
     public function __construct(
