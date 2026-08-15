@@ -8,8 +8,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        TYPO3: [ '14' , '13' ]
+        TYPO3: [ '14', '13', '12' ]
         php: [ '8.2', '8.5']
+        exclude:
+          # TYPO3 12 LTS only officially supports PHP 8.1-8.3.
+          - TYPO3: '12'
+            php: '8.5'
 
     steps:
       - name: Checkout
@@ -25,7 +29,13 @@ jobs:
         run: sudo /etc/init.d/mysql start
 
       - name: Validate composer.json and composer.lock
-        run: composer validate
+        # --no-check-publish: composer.json's "policy.advisories.block" (needed for a
+        # fresh TYPO3 12 install, see the "Install composer dependencies TYPO3 12" step)
+        # isn't recognized by the strict "can this be published as a package" schema
+        # composer validate otherwise applies, even though Composer itself reads and
+        # acts on it - only the publish-strictness check needs skipping, not schema
+        # validation as a whole.
+        run: composer validate --no-check-publish
 
       - name: Cache dependencies
         uses: actions/cache@v6
@@ -42,12 +52,20 @@ jobs:
         if: matrix.TYPO3 == '13'
         run: |
           composer require typo3/cms-backend:^13.4 --no-progress --no-interaction --dev -W
+
+      - name: Install composer dependencies TYPO3 12
+        if: matrix.TYPO3 == '12'
+        run: |
+          composer require typo3/cms-backend:^12.4 --no-progress --no-interaction --dev -W
       - name: Phpstan 14
         if: matrix.TYPO3 == '14'
         run: .Build/bin/phpstan analyze -c Build/phpstan.neon
       - name: Phpstan 13
         if: matrix.TYPO3 == '13'
         run: .Build/bin/phpstan analyze -c Build/phpstan13.neon
+      - name: Phpstan 12
+        if: matrix.TYPO3 == '12'
+        run: .Build/bin/phpstan analyze -c Build/phpstan12.neon
       - name: Phpcsfix
         run: .Build/bin/php-cs-fixer fix --config=Build/php-cs-fixer.php --dry-run --stop-on-violation --using-cache=no
       - name: Functional Tests

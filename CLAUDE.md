@@ -180,6 +180,18 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
 `RecordFactory`/`RecordInterface`, `Context`, `ModifyPageLayoutContentEvent`,
 `RecordTransformationProcessor` ("record-transformation" DataProcessor).
 
+**`VersionState` is not one of those, discovered by actually running phpstan against a
+real v12 install (`composer require typo3/cms-backend:^12.4` in a scratch copy) - static
+reasoning from doc comments alone missed it.** It's a native backed `enum VersionState:
+int` on v13/v14 (`::DELETE_PLACEHOLDER->value`, `::tryFrom()`), but TYPO3's older
+`Enumeration`-based class on v12 (`::DELETE_PLACEHOLDER` is already a plain int constant,
+no `->value`, no `::tryFrom()` at all - calling it is a fatal error, not just a phpstan
+finding). `AiMetadataRecordFinder` uses the raw ints (`1`/`2`) directly instead, with a
+comment - same "stable enough to hardcode" reasoning as the TCA `t3ver_state` values
+already documented in "Testing". **When adding new code that touches `t3ver_state`/
+`VersionState`, check the real v12 vendor source first, don't assume the enum API is
+safe just because it isn't mentioned in a version-guard comment nearby.**
+
 ## Backend UI
 
 - The overview module (`Configuration/Backend/Modules.php`) sets
@@ -366,24 +378,35 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   php -d memory_limit=2G .Build/bin/phpunit -c Build/phpunit/FunctionalTests.xml Tests/Functional
   php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan.neon
   ```
-- **CI (`.github/workflows/ci.yml`) runs the matrix against both TYPO3 versions**, and
-  phpstan needs a *second*, separate config for v13: `Build/phpstan13.neon` (level 5,
-  same `Classes` path) plus `Build/phpstan13-baseline.neon` - the baseline exists because
-  `Classes/Legacy/*`'s early-return guard (`if ($typo3Version->getMajorVersion() < 14) return;`)
-  doesn't stop phpstan from statically analyzing the *v14* classes' references to
-  v14-only core APIs (`ComponentFactory`, `ProcessFileListActionsEvent::getRequest()`/
-  `setAction()`, etc.) that genuinely don't exist when `composer require typo3/cms-backend:^13.4`
-  is installed - `Build/phpstan.neon`'s exclusion of `Classes/Legacy/` only handles the
-  reverse case. Run both locally when touching anything version-split:
+- **CI (`.github/workflows/ci.yml`) runs the matrix against all three TYPO3 versions**,
+  and phpstan needs a *separate* config per pre-v14 version: `Build/phpstan13.neon` /
+  `Build/phpstan12.neon` (level 5, same `Classes` path) plus their own
+  `Build/phpstan13-baseline.neon` / `Build/phpstan12-baseline.neon` - the baselines exist
+  because `Classes/Legacy/*`'s early-return guard (`if ($typo3Version->getMajorVersion()
+  < 14) return;`) doesn't stop phpstan from statically analyzing the *v14* classes'
+  references to v14-only core APIs (`ComponentFactory`, `IconSize`,
+  `ProcessFileListActionsEvent::getRequest()`/`setAction()`, etc.) that genuinely don't
+  exist when `composer require typo3/cms-backend:^13.4` (or `^12.4`) is installed -
+  `Build/phpstan.neon`'s exclusion of `Classes/Legacy/` only handles the reverse case.
+  The v12 baseline was generated from a real install, not hand-copied from the v13 one -
+  same errors for the shared `Classes/Legacy`-shaped API gaps, plus one v12-only entry
+  (`IconSize`, absent even from v13) the v13 baseline doesn't have. Run all when touching
+  anything version-split:
   ```
   php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan13.neon
+  php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan12.neon
   ```
-  **No `Build/phpstan12.neon`/CI matrix entry exists yet for v12** - added when v12
-  support itself was added, but a v12-targeted phpstan config + baseline (same idea as
-  the v13 one, for `Classes/`'s v14-only refs) and a `.github/workflows/ci.yml` matrix
-  entry were deliberately left as a follow-up, not done as part of that change.
   `typo3/testing-framework` also needs `^8` for a real v12 install (`^9` only supports
   v13/v14) - `composer.json` already allows `^8 || ^9`.
+  **A fresh `composer require typo3/cms-backend:^12.4` fails without
+  `"policy": {"advisories": {"block": false}}` in `composer.json`** - Composer's
+  solver-level advisory block rejects the *entire* `12.4.x` range (not just specific
+  vulnerable patches) whenever Packagist has any historical advisory against the package,
+  which TYPO3 12 LTS - being older, with a longer CVE history - always will. Confirmed
+  this doesn't affect v13/v14 (a fresh v13 install has zero advisories as of the same
+  check), so it's a genuine v12-only requirement, not something to add defensively
+  elsewhere. `composer audit`'s informational report (not the resolver block) still runs
+  and is unaffected by this setting.
 - **CSV fixture format is easy to get wrong**: the table name must be on its own line
   (first column only), *then* a separate line with a leading empty column + field names,
   *then* data rows (leading empty column). Table name + field names on the same line

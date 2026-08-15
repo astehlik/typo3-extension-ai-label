@@ -51,6 +51,11 @@
             "typo3/class-alias-loader": true
         }
     },
+    "policy": {
+        "advisories": {
+            "block": false
+        }
+    },
     "autoload-dev": {
         "psr-4": {
             "B13\\AiLabel\\Tests\\": "Tests"
