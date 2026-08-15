@@ -15,6 +15,8 @@ namespace B13\AiLabel\Tests\Functional\Service;
 use B13\AiLabel\Service\AiLabelApi;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 final class AiLabelApiTest extends FunctionalTestCase
@@ -39,6 +41,9 @@ final class AiLabelApiTest extends FunctionalTestCase
         $this->importCSVDataSet(__DIR__ . '/Fixtures/be_users.csv');
         $this->importCSVDataSet(__DIR__ . '/Fixtures/pages.csv');
         $this->backendUser = $GLOBALS['BE_USER'] = $this->setUpBackendUser(1);
+        // DataHandler (via AiLabelApi) needs this on v12 - BackendUtility::
+        // getLanguageService() has no fallback there and fatals without it.
+        $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($GLOBALS['BE_USER']);
     }
 
     #[Test]

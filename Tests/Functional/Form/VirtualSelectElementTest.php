@@ -14,6 +14,8 @@ namespace B13\AiLabel\Tests\Functional\Form;
 
 use B13\AiLabel\Form\Element\VirtualSelectElement;
 use PHPUnit\Framework\Attributes\Test;
+use TYPO3\CMS\Backend\Form\NodeFactory;
+use TYPO3\CMS\Core\Information\Typo3Version;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
@@ -48,8 +50,7 @@ final class VirtualSelectElementTest extends FunctionalTestCase
     #[Test]
     public function rendersASelectWithTheCurrentOriginMarkedAsSelected(): void
     {
-        $element = $this->get(VirtualSelectElement::class);
-        $element->setData([
+        $data = [
             'tableName' => 'tt_content',
             'fieldName' => 'tx_ailabel_origin',
             'databaseRow' => ['uid' => 1],
@@ -59,8 +60,20 @@ final class VirtualSelectElementTest extends FunctionalTestCase
                 'fieldConf' => $GLOBALS['TCA']['tt_content']['columns']['tx_ailabel_origin'],
                 'itemFormElValue' => 2,
                 'itemFormElName' => 'data[tt_content][1][tx_ailabel_origin]',
+                // Avoids a PHP warning from LocalizationStateSelector, a
+                // defaultFieldWizard attached automatically.
+                'itemFormElID' => 'data-tt_content-1-tx_ailabel_origin',
             ],
-        ]);
+        ];
+
+        // AbstractNode::setData() doesn't exist before TYPO3 v13 - v12 takes $data via
+        // the classic __construct(?NodeFactory, array $data) instead.
+        if ((new Typo3Version())->getMajorVersion() < 13) {
+            $element = GeneralUtility::makeInstance(VirtualSelectElement::class, $this->get(NodeFactory::class), $data);
+        } else {
+            $element = $this->get(VirtualSelectElement::class);
+            $element->setData($data);
+        }
 
         $result = $element->render();
 

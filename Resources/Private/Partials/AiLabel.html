@@ -16,15 +16,10 @@
       use. Projects that ship their own icon set can override this partial via
       a higher-priority partialRootPaths entry.
 </f:comment>
-<f:argument name="file" type="TYPO3\CMS\Core\Resource\FileReference" optional="{true}"/>
-<f:argument name="record" type="array" optional="{true}"/>
-<f:argument name="variant" type="string" optional="{true}"/>
 <f:comment>
-    Not using f:argument's own "default" here: it only applies when the
-    argument is completely absent, not when it's explicitly passed as an
-    empty/null value (which callers forwarding their own possibly-unset
-    "variant" variable, e.g. arguments="{variant: variant}", will do) - the
-    truthy check below covers both cases.
+    Not declaring these via f:argument: doesn't exist in TYPO3 v12's bundled Fluid.
+    variant's "default" wouldn't help anyway - it only applies when the argument is
+    completely absent, not when passed as empty/null - hence the truthy check below.
 </f:comment>
 <f:variable name="variant" value="{f:if(condition: variant, then: variant, else: 'black')}"/>
 <f:if condition="{file}">

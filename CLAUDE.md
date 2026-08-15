@@ -7,13 +7,9 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
 
 - Extension key `ai_label`, composer package `b13/ai-label`, PHP namespace `B13\AiLabel`
 - Must work on **TYPO3 v12.4, v13.4, and v14.3+** - this drives most of the architecture
-  below. v12 support was added later, on top of the existing v13/v14 split (see
-  "v13/v14 compatibility architecture"): wherever v12's API shape matches v13's, the
-  existing `Classes/Legacy/` class is reused as-is (its `Typo3Version` guard already
-  says "not v14", which is true for v12 too) - the only genuinely new v12-only work was
-  for APIs that don't exist on v12 at all (`TcaSchemaFactory`, the `#[AsEventListener]`
-  attribute, `IconSize`), see "Known version-safe APIs" and "PSR-14 listener
-  registration" below.
+  below. v12 reuses the existing v13/v14 split (see "v13/v14 compatibility
+  architecture") wherever v12's API matches v13's; only APIs missing on v12 entirely
+  (`TcaSchemaFactory`, `#[AsEventListener]`, `IconSize`) needed new handling.
 - `require`: `typo3/cms-backend`, `typo3/cms-frontend` (hard dependency - see "Optional
   dependencies" below for why). `typo3/cms-filelist`, `typo3/cms-workspaces`, and
   `typo3/cms-fluid-styled-content` are `require-dev` only.
@@ -143,13 +139,10 @@ just be deleted once v13 support is dropped. `Classes/Legacy/` is excluded from
 phpstan (`Build/phpstan.neon`).
 
 **v12 support reuses this same split, it does not add a third branch.** v12's event/API
-shape for everything currently split (`ModifyRecordListRecordActionsEvent`,
-`ProcessFileListActionsEvent`, no `ComponentFactory`) matches v13's exactly (verified
-against the actual v12.4.48 vendor source) - so the existing `< 14` guard already routes
-v12 through the same `Classes/Legacy/` class v13 uses, with no code change needed there.
-Only add a real three-way branch if a future v12-specific divergence is found; check the
-actual installed vendor source for that TYPO3 major first, don't assume v12 needs its
-own path.
+shape for everything currently split matches v13's exactly, so the existing `< 14` guard
+already routes v12 through the same `Classes/Legacy/` class v13 uses. Only add a real
+three-way branch if a future v12-specific divergence is found - check the actual
+installed vendor source first, don't assume.
 
 **Only do this when there's an actual API difference.** Several classes that originally
 had this split were later merged back into one version-agnostic class once it turned out
@@ -157,40 +150,46 @@ nothing version-specific remained (e.g. `MarkFlaggedPageInLayoutModule` - `getBa
 doesn't touch `ComponentFactory`, and `ModifyPageLayoutContentEvent` is identical on both
 versions). Always check first whether the split is still needed before adding one.
 
-Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`,
-lazily via `GeneralUtility::makeInstance()` since it can't be constructor-injected - this
-class is instantiated on all three versions; v12/v13 `createButtonHtml()` builds raw
-HTML, and further branches internally on `Typo3Version` for the icon-size argument alone,
-since `IconSize` the enum doesn't exist before v13 either),
-`MarkFlaggedRecordsInRecordList`, `MarkFlaggedFilesInFileList` (their v13/v14 event
-classes have the same name but different constructors/methods).
+Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`;
+v12/v13 `createButtonHtml()` builds raw HTML, plus its own internal `Typo3Version`
+branch for the icon-size argument, since `IconSize` doesn't exist before v13),
+`MarkFlaggedRecordsInRecordList`, `MarkFlaggedFilesInFileList` (v13/v14 event classes
+share a name but differ in constructor/methods).
 
-PSR-14 listeners (`AddAiMetaFieldsToTca`, `AddAiMetadataToRecordListQuery`,
-`AfterFileContentChangedListener`, `MarkFlaggedPageInLayoutModule`, and both
-`MarkFlaggedRecordsInRecordList`/`MarkFlaggedFilesInFileList` pairs) are registered via
-explicit `event.listener` tags in `Configuration/Services.yaml`, **not** the
-`#[AsEventListener]` PHP attribute - that attribute class doesn't exist before v13. The
-underlying `event.listener` Services.yaml tag it compiles down to is identical on
-v12/v13/v14, so this is the one true registration mechanism, not a v12-only add-on -
-don't add `#[AsEventListener]` back even for the v14-only classes, or v13/v14 will
-register them twice (once via the attribute, once via the explicit tag).
+All PSR-14 listeners are registered via explicit `event.listener` tags in
+`Configuration/Services.yaml`, **not** the `#[AsEventListener]` attribute - that class
+doesn't exist before v13. Don't add `#[AsEventListener]` back even for the v14-only
+classes, or v13/v14 will register them twice.
 
 Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
 `BackendUtility::workspaceOL()`,
 `RecordFactory`/`RecordInterface`, `Context`, `ModifyPageLayoutContentEvent`,
 `RecordTransformationProcessor` ("record-transformation" DataProcessor).
 
-**`VersionState` is not one of those, discovered by actually running phpstan against a
-real v12 install (`composer require typo3/cms-backend:^12.4` in a scratch copy) - static
-reasoning from doc comments alone missed it.** It's a native backed `enum VersionState:
-int` on v13/v14 (`::DELETE_PLACEHOLDER->value`, `::tryFrom()`), but TYPO3's older
-`Enumeration`-based class on v12 (`::DELETE_PLACEHOLDER` is already a plain int constant,
-no `->value`, no `::tryFrom()` at all - calling it is a fatal error, not just a phpstan
-finding). `AiMetadataRecordFinder` uses the raw ints (`1`/`2`) directly instead, with a
-comment - same "stable enough to hardcode" reasoning as the TCA `t3ver_state` values
-already documented in "Testing". **When adding new code that touches `t3ver_state`/
-`VersionState`, check the real v12 vendor source first, don't assume the enum API is
-safe just because it isn't mentioned in a version-guard comment nearby.**
+**`VersionState` is not one of those.** Native backed `enum VersionState: int` on
+v13/v14 (`::DELETE_PLACEHOLDER->value`, `::tryFrom()`), but TYPO3's older
+`Enumeration`-based class on v12 (`::DELETE_PLACEHOLDER` is already a plain int, no
+`->value`/`::tryFrom()` - fatal error if called). `AiMetadataRecordFinder` uses the raw
+ints (`1`/`2`) directly instead. Check the real v12 vendor source before assuming an
+enum-shaped core API is safe.
+
+**Neither is `AbstractNode::setData()`** - present in v12's source only as a
+commented-out method (`@todo Enable this method in v13`). `NodeFactory` itself already
+branches around this at runtime (see `initializeNodeClass()` above), so FormEngine
+nodes need no code change - only test code that constructs a node directly does:
+`VirtualSelectElementTest` branches on `Typo3Version`, using the classic
+`__construct(?NodeFactory, array $data)` (a *real* NodeFactory, not null - render()
+dereferences it) on v12 vs. `$this->get()` + `setData()` on v13/v14.
+
+**TYPO3 v12's bundled Fluid doesn't shield `<f:comment>` content from tag
+tokenization.** Writing a literal ViewHelper tag in angle-bracket form inside a comment,
+purely as descriptive text, gets parsed as a second, real (attribute-less) invocation
+and fails its own required-argument check. Any comment mentioning a ViewHelper tag by
+name must omit the angle brackets (`f:media`, not `<f:media>`) - see
+`Media/Rendering/Image.html`/`.fluid.html`. Grep for regressions:
+```
+awk '/<f:comment>/{c=1} c && /<[a-zA-Z]+:[a-zA-Z]/{print FILENAME":"FNR": "$0} /<\/f:comment>/{c=0}' $(find Resources Tests -iname "*.html")
+```
 
 ## Backend UI
 
@@ -380,18 +379,9 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   ```
 - **CI (`.github/workflows/ci.yml`) runs the matrix against all three TYPO3 versions**,
   and phpstan needs a *separate* config per pre-v14 version: `Build/phpstan13.neon` /
-  `Build/phpstan12.neon` (level 5, same `Classes` path) plus their own
-  `Build/phpstan13-baseline.neon` / `Build/phpstan12-baseline.neon` - the baselines exist
-  because `Classes/Legacy/*`'s early-return guard (`if ($typo3Version->getMajorVersion()
-  < 14) return;`) doesn't stop phpstan from statically analyzing the *v14* classes'
-  references to v14-only core APIs (`ComponentFactory`, `IconSize`,
-  `ProcessFileListActionsEvent::getRequest()`/`setAction()`, etc.) that genuinely don't
-  exist when `composer require typo3/cms-backend:^13.4` (or `^12.4`) is installed -
-  `Build/phpstan.neon`'s exclusion of `Classes/Legacy/` only handles the reverse case.
-  The v12 baseline was generated from a real install, not hand-copied from the v13 one -
-  same errors for the shared `Classes/Legacy`-shaped API gaps, plus one v12-only entry
-  (`IconSize`, absent even from v13) the v13 baseline doesn't have. Run all when touching
-  anything version-split:
+  `Build/phpstan12.neon` plus their own baselines - `Classes/Legacy/*`'s runtime guard
+  doesn't stop phpstan from statically analyzing the *v14* classes' references to
+  v14-only APIs. Run all when touching anything version-split:
   ```
   php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan13.neon
   php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan12.neon
@@ -399,14 +389,9 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   `typo3/testing-framework` also needs `^8` for a real v12 install (`^9` only supports
   v13/v14) - `composer.json` already allows `^8 || ^9`.
   **A fresh `composer require typo3/cms-backend:^12.4` fails without
-  `"policy": {"advisories": {"block": false}}` in `composer.json`** - Composer's
-  solver-level advisory block rejects the *entire* `12.4.x` range (not just specific
-  vulnerable patches) whenever Packagist has any historical advisory against the package,
-  which TYPO3 12 LTS - being older, with a longer CVE history - always will. Confirmed
-  this doesn't affect v13/v14 (a fresh v13 install has zero advisories as of the same
-  check), so it's a genuine v12-only requirement, not something to add defensively
-  elsewhere. `composer audit`'s informational report (not the resolver block) still runs
-  and is unaffected by this setting.
+  `"policy": {"advisories": {"block": false}}` in `composer.json`** - Composer's solver
+  rejects the entire `12.4.x` range whenever Packagist has any historical advisory
+  against the package, which an older LTS always will. v13/v14 aren't affected.
 - **CSV fixture format is easy to get wrong**: the table name must be on its own line
   (first column only), *then* a separate line with a leading empty column + field names,
   *then* data rows (leading empty column). Table name + field names on the same line

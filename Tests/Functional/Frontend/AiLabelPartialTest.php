@@ -12,9 +12,8 @@ namespace B13\AiLabel\Tests\Functional\Frontend;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Tests\Functional\CreatesFluidViewTrait;
 use PHPUnit\Framework\Attributes\Test;
-use TYPO3\CMS\Core\View\ViewFactoryData;
-use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 /**
@@ -29,6 +28,8 @@ use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
  */
 final class AiLabelPartialTest extends FunctionalTestCase
 {
+    use CreatesFluidViewTrait;
+
     // ai_label composer-requires typo3/cms-filelist and typo3/cms-fluid-styled-content -
     // neither is part of testing-framework's default sysext set, so both must be loaded
     // explicitly or PackageCollection throws.
@@ -43,10 +44,10 @@ final class AiLabelPartialTest extends FunctionalTestCase
 
     private function renderPartial(array $data, ?string $variant = null): string
     {
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-            partialRootPaths: [__DIR__ . '/../../../Resources/Private/Partials/'],
-        ));
+        $view = $this->createFluidView(
+            [__DIR__ . '/Fixtures/Templates/'],
+            [__DIR__ . '/../../../Resources/Private/Partials/'],
+        );
         $view->assign('data', $data);
         $view->assign('variant', $variant);
 

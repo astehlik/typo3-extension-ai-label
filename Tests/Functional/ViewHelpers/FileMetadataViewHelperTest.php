@@ -12,14 +12,15 @@ namespace B13\AiLabel\Tests\Functional\ViewHelpers;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Tests\Functional\CreatesFluidViewTrait;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Resource\FileReference;
-use TYPO3\CMS\Core\View\ViewFactoryData;
-use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 final class FileMetadataViewHelperTest extends FunctionalTestCase
 {
+    use CreatesFluidViewTrait;
+
     // ai_label composer-requires typo3/cms-filelist and typo3/cms-fluid-styled-content -
     // neither is part of testing-framework's default sysext set, so both must be loaded
     // explicitly or PackageCollection throws.
@@ -41,9 +42,7 @@ final class FileMetadataViewHelperTest extends FunctionalTestCase
     #[Test]
     public function assignsAndExposesAiMetadataOfAFileReference(): void
     {
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-        ));
+        $view = $this->createFluidView([__DIR__ . '/Fixtures/Templates/']);
         $view->assign('file', new FileReference(['uid_local' => 1]));
 
         self::assertSame('1||0|0', trim($view->render('FileMetadata')));

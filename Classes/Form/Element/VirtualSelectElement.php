@@ -12,6 +12,7 @@ namespace B13\AiLabel\Form\Element;
  * of the License, or any later version.
  */
 
+use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Backend\Form\Element\SelectSingleElement;
 
 // TCA type=user delegating to core's selectSingle rendering - same trick as
@@ -34,6 +35,10 @@ use TYPO3\CMS\Backend\Form\Element\SelectSingleElement;
 // job, item resolution happens upstream in the real type=select case). Resolved here
 // instead, right before rendering, to keep the same LLL:... syntax working across
 // backend user languages without baking one language's text into cached TCA.
+//
+// #[Autoconfigure(public: true)]: VirtualSelectElementTest fetches this via
+// $this->get(), which needs it public - never a constructor dependency otherwise.
+#[Autoconfigure(public: true)]
 final class VirtualSelectElement extends SelectSingleElement
 {
     public function render(): array

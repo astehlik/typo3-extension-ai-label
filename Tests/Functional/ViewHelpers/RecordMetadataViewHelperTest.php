@@ -12,13 +12,14 @@ namespace B13\AiLabel\Tests\Functional\ViewHelpers;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Tests\Functional\CreatesFluidViewTrait;
 use PHPUnit\Framework\Attributes\Test;
-use TYPO3\CMS\Core\View\ViewFactoryData;
-use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 final class RecordMetadataViewHelperTest extends FunctionalTestCase
 {
+    use CreatesFluidViewTrait;
+
     // ai_label composer-requires typo3/cms-filelist and typo3/cms-fluid-styled-content -
     // neither is part of testing-framework's default sysext set, so both must be loaded
     // explicitly or PackageCollection throws.
@@ -31,12 +32,15 @@ final class RecordMetadataViewHelperTest extends FunctionalTestCase
         'typo3conf/ext/ai_label',
     ];
 
+    private function createView(): object
+    {
+        return $this->createFluidView([__DIR__ . '/Fixtures/Templates/']);
+    }
+
     #[Test]
     public function assignsAndExposesAiMetadataOfARecord(): void
     {
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-        ));
+        $view = $this->createView();
         $view->assign('record', [
             'tx_ailabel_metadata' => '{"origin":1,"reviewed_by":5,"reviewed_timestamp":1440000000}',
         ]);
@@ -47,9 +51,7 @@ final class RecordMetadataViewHelperTest extends FunctionalTestCase
     #[Test]
     public function unflaggedRecordYieldsUnflaggedMetadata(): void
     {
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-        ));
+        $view = $this->createView();
         $view->assign('record', ['tx_ailabel_metadata' => null]);
 
         self::assertSame('||0|0', trim($view->render('RecordMetadata')));
@@ -58,9 +60,7 @@ final class RecordMetadataViewHelperTest extends FunctionalTestCase
     #[Test]
     public function returnsAiMetadataObjectForInlineUsageWithoutAs(): void
     {
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-        ));
+        $view = $this->createView();
         $view->assign('record', [
             'tx_ailabel_metadata' => '{"origin":2,"reviewed_by":0,"reviewed_timestamp":0}',
         ]);

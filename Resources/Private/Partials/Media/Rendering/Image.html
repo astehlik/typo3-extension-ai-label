@@ -8,7 +8,7 @@
     surrounding content element.
 
     Unlike DropIn/After/All.html - an extension point Core ships intentionally empty -
-    this overrides a partial that has real content, so the <f:media> call below is a
+    this overrides a partial that has real content, so the f:media call below is a
     verbatim copy of Core's and has to be kept in sync when Core changes it. It is
     identical on v13.4 and v14; only the file name differs (Image.html vs
     Image.fluid.html), which is why this file exists twice.
@@ -16,6 +16,11 @@
     Nothing is wrapped unless the image marker mode is "overlay" AND the image is
     actually flagged - in every other case this renders byte-for-byte what Core would
     have rendered, including in "baked" mode, where the marker is already in the pixels.
+
+    Writing f:media without angle brackets above on purpose: TYPO3 v12's bundled
+    Fluid doesn't shield f:comment content from tag tokenization - the tag form
+    written here would parse as a second, real (attribute-less) invocation and
+    fail its own required "file" check. Confirmed against a real v12 install.
 </f:comment>
 <f:variable name="renderedImage"><f:media class="image-embed-item" file="{file}" width="{dimensions.width}" height="{dimensions.height}" alt="{file.alternative}" title="{file.title}" loading="{settings.media.lazyLoading}" decoding="{settings.media.imageDecoding}" /></f:variable>
 <f:variable name="aiMetadata" value="{ailabel:fileMetadata(fileReference: file)}"/>

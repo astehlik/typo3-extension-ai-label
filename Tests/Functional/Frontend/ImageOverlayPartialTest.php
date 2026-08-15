@@ -12,11 +12,10 @@ namespace B13\AiLabel\Tests\Functional\Frontend;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Tests\Functional\CreatesFluidViewTrait;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Core\Environment;
 use TYPO3\CMS\Core\Resource\FileReference;
-use TYPO3\CMS\Core\View\ViewFactoryData;
-use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 /**
@@ -33,6 +32,8 @@ use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
  */
 final class ImageOverlayPartialTest extends FunctionalTestCase
 {
+    use CreatesFluidViewTrait;
+
     // ai_label composer-requires typo3/cms-filelist and typo3/cms-fluid-styled-content -
     // neither is part of testing-framework's default sysext set, so both must be loaded
     // explicitly or PackageCollection throws.
@@ -58,10 +59,10 @@ final class ImageOverlayPartialTest extends FunctionalTestCase
     {
         $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['imageMarker'] = $mode;
 
-        $view = $this->get(ViewFactoryInterface::class)->create(new ViewFactoryData(
-            templateRootPaths: [__DIR__ . '/Fixtures/Templates/'],
-            partialRootPaths: [__DIR__ . '/../../../Resources/Private/Partials/'],
-        ));
+        $view = $this->createFluidView(
+            [__DIR__ . '/Fixtures/Templates/'],
+            [__DIR__ . '/../../../Resources/Private/Partials/'],
+        );
         // "crop" has to be present explicitly: f:media reads it off the reference, and
         // getProperty() throws for keys that exist on neither the reference nor the file.
         $view->assign('file', new FileReference(['uid_local' => $fileUid, 'crop' => null]));

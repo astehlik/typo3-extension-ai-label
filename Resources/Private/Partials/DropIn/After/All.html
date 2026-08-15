@@ -3,11 +3,13 @@
     Overrides EXT:fluid_styled_content's own DropIn/After/All.html, which is an
     intentionally empty extension point (rendered after all other output inside
     every content element's wrapping container) - see
-    Layouts/Default.html in EXT:fluid_styled_content:
+    Layouts/Default.html in EXT:fluid_styled_content, which renders this
+    partial via f:render section="After" optional="true", falling back to
+    f:render partial="DropIn/After/All" arguments="_all".
 
-    <f:render section="After" optional="true">
-        <f:render partial="DropIn/After/All" arguments="{_all}" />
-    </f:render>
+    Written without angle brackets above on purpose - TYPO3 v12's bundled Fluid
+    misparses literal tag markup inside f:comment as a real invocation (see
+    Media/Rendering/Image.html's comment for the full explanation).
 
     Adding the AiLabel render call here (instead of copying the whole Layout
     just to extend its "Footer" section) means every content element gets it
