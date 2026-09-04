@@ -321,9 +321,16 @@ DataProcessorInterface` is a class-declaration-level dependency (`implements`, n
 type hint) - PHP resolves that eagerly when the file is loaded, and `Services.yaml`'s
 `resource: '../Classes/*'` autowiring scan loads every class regardless of whether it's
 ever used. Missing `cms-frontend` would hard-crash the *entire* container compilation,
-not just the DataProcessor. (`typo3/cms-workspaces` would have the same problem if
-`AiMetadataRecordFinder` ever started implementing a workspaces-provided interface -
-currently it only calls static `BackendUtility` methods, which stays lazy/safe.)
+not just the DataProcessor. `typo3/cms-workspaces` would have the same problem if
+anything ever started implementing a workspaces-provided interface.
+
+`typo3/cms-workspaces` is `require-dev` and `suggests`/`suggest` only:
+`RepairMetadataAfterPublish` names `AfterRecordPublishedEvent` as a method-parameter type
+hint, which `ListenerProviderPass` resolves through `ReflectionNamedType::getName()`
+without autoloading, so the listener is dormant when workspaces is absent - same
+mechanism as `MarkFlaggedFilesInFileList` with filelist. Without it, publishing writes
+the JSON column back double-encoded and every consumer reads the record as unflagged, so
+an installation that uses workspaces needs it.
 
 Before adding a new hard dependency, check whether the usage is a type hint (safe,
 can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency

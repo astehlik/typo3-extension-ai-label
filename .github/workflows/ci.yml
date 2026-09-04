@@ -59,3 +59,47 @@ jobs:
           export typo3DatabaseUsername="root";
           export typo3DatabasePassword="root";
           .Build/bin/phpunit -c Build/phpunit/FunctionalTests.xml Tests/Functional
+
+  # typo3/cms-workspaces is require-dev only: RepairMetadataAfterPublish names
+  # AfterRecordPublishedEvent as a parameter type hint, which PHP and
+  # ListenerProviderPass both resolve lazily. Turning that into an instanceof, a
+  # constructor argument or an implements would hard-crash container compilation on
+  # every installation without workspaces, so it is verified rather than assumed.
+  without-workspaces:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up PHP Version
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+
+      - name: Start MySQL
+        run: sudo /etc/init.d/mysql start
+
+      - name: Install composer dependencies without workspaces
+        run: |
+          composer remove typo3/cms-workspaces --dev --no-update --no-interaction
+          composer update --no-progress --no-interaction
+
+      - name: Assert the event class is really absent
+        run: |
+          php -r 'require ".Build/vendor/autoload.php";
+            exit(class_exists("TYPO3\\CMS\\Workspaces\\Event\\AfterRecordPublishedEvent") ? 1 : 0);'
+
+      - name: Install ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Functional Tests that do not need workspaces
+        run: |
+          export typo3DatabaseName="typo3";
+          export typo3DatabaseHost="127.0.0.1";
+          export typo3DatabaseUsername="root";
+          export typo3DatabasePassword="root";
+          .Build/bin/phpunit -c Build/phpunit/FunctionalTests.xml \
+            Tests/Functional/Form Tests/Functional/Repository/AiMetadataRecordFinderPermissionsTest.php
