@@ -15,6 +15,7 @@ namespace B13\AiLabel\EventListener;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Service\AiLabelApi;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Log\LoggerInterface;
 use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Http\ApplicationType;
@@ -50,6 +51,7 @@ final class AfterFileContentChangedListener
     public function __construct(
         private readonly FlashMessageService $flashMessageService,
         private readonly AiLabelApi $aiLabelApi,
+        private readonly LoggerInterface $logger,
     ) {
     }
 
@@ -73,18 +75,31 @@ final class AfterFileContentChangedListener
         $this->addFlashMessage();
     }
 
+    /**
+     * Best effort: replacing a file must not fail because the review could not be reset.
+     * AiLabelApi throws for a missing backend user, and for a table a project removed
+     * from ApplicableTablesEvent, before it ever reaches DataHandler.
+     */
     private function resetReviewIfNeeded(AiMetadata $metadata, int $metadataUid): void
     {
         if (!$metadata->isReviewed()) {
             return;
         }
 
-        $this->aiLabelApi->aiMetadataUpdate(
-            'sys_file_metadata',
-            $metadataUid,
-            $metadata->withReviewedBy(0)->withReviewedTimestamp(0),
-            $this->getBackendUserAuth()
-        );
+        try {
+            $this->aiLabelApi->aiMetadataUpdate(
+                'sys_file_metadata',
+                $metadataUid,
+                $metadata->withReviewedBy(0)->withReviewedTimestamp(0),
+                $this->getBackendUserAuth()
+            );
+        } catch (\Throwable $e) {
+            $this->logger->warning(
+                'Could not reset the review of sys_file_metadata:{uid} after its file content changed. '
+                . 'The file still carries a review that was given for its previous content.',
+                ['uid' => $metadataUid, 'exception' => $e]
+            );
+        }
     }
 
     protected function getServerRequest(): ?ServerRequestInterface
