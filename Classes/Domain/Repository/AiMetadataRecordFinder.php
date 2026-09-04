@@ -18,7 +18,6 @@ use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
 use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use TYPO3\CMS\Backend\History\RecordHistory;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
@@ -27,6 +26,7 @@ use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\QueryBuilder;
 use TYPO3\CMS\Core\Database\Query\QueryHelper;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Localization\LanguageService;
@@ -102,7 +102,7 @@ final class AiMetadataRecordFinder
         $isVersionable = $this->tcaSchemaFactory->has($table)
             && $this->tcaSchemaFactory->get($table)->hasCapability(TcaSchemaCapability::Workspace);
 
-        $records = [];
+        $rows = [];
 
         foreach ($this->findLiveRows($table, $pid, $isVersionable) as $row) {
             if ($isVersionable && $workspaceId > 0) {
@@ -117,18 +117,23 @@ final class AiMetadataRecordFinder
                 }
             }
 
-            $record = $this->buildRecord($table, $row);
-            if ($record !== null) {
-                $records[] = $record;
-            }
+            $rows[] = $row;
         }
 
         if ($isVersionable && $workspaceId > 0) {
             foreach ($this->findNewInWorkspace($table, $pid, $workspaceId) as $row) {
-                $record = $this->buildRecord($table, $row);
-                if ($record !== null) {
-                    $records[] = $record;
-                }
+                $rows[] = $row;
+            }
+        }
+
+        // One query for the whole table instead of two per record.
+        $authors = $this->resolveAuthors($table, $rows);
+
+        $records = [];
+        foreach ($rows as $row) {
+            $record = $this->buildRecord($table, $row, $authors[(int)$row['uid']] ?? '');
+            if ($record !== null) {
+                $records[] = $record;
             }
         }
 
@@ -409,7 +414,7 @@ final class AiMetadataRecordFinder
     }
 
     /** @param array<string, mixed> $row */
-    private function buildRecord(string $table, array $row): ?array
+    private function buildRecord(string $table, array $row, string $author): ?array
     {
         $metadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
         if (!$metadata->isFlagged()) {
@@ -425,7 +430,7 @@ final class AiMetadataRecordFinder
             'pid' => (int)$row['pid'],
             'title' => BackendUtility::getRecordTitle($table, $row),
             'metadata' => $metadata,
-            'author' => $this->resolveAuthor($table, $row),
+            'author' => $author,
             // Resolves per-row overlays (hidden, workspace state, ...), same as
             // any other backend record listing. Built here rather than in the
             // Fluid template since IconFactory needs the actual DB row, which
@@ -449,18 +454,73 @@ final class AiMetadataRecordFinder
         return $event->getRecord();
     }
 
-    /** @param array<string, mixed> $row */
-    private function resolveAuthor(string $table, array $row): string
+    /**
+     * Creating user per record uid, from the record's insert history entry as
+     * RecordHistory::getCreationInformationForRecord() reads it, once per table.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<int, string>
+     */
+    private function resolveAuthors(string $table, array $rows): array
     {
-        $recordHistory = GeneralUtility::makeInstance(RecordHistory::class);
-        $ownerInformation = $recordHistory->getCreationInformationForRecord($table, $row);
-        $ownerUid = (int)(is_array($ownerInformation) && ($ownerInformation['usertype'] ?? '') === 'BE' ? $ownerInformation['userid'] : 0);
-        if ($ownerUid <= 0) {
-            return '';
+        $recordUids = array_map(static fn (array $row): int => (int)$row['uid'], $rows);
+        if ($recordUids === []) {
+            return [];
         }
 
-        $creatorRecord = BackendUtility::getRecord('be_users', $ownerUid);
-        return ($creatorRecord['realName'] ?? '') ?: ($creatorRecord['username'] ?? '') ?: '';
+        $creatorUidPerRecord = [];
+        $queryBuilder = $this->connectionPool->getQueryBuilderForTable('sys_history');
+        $queryBuilder->getRestrictions()->removeAll();
+        // Chunked to stay under the placeholder limit.
+        foreach (array_chunk($recordUids, 1000) as $recordUidChunk) {
+            $historyEntries = $queryBuilder
+                ->select('recuid', 'userid', 'usertype')
+                ->from('sys_history')
+                ->where(
+                    $queryBuilder->expr()->eq('tablename', $queryBuilder->createNamedParameter($table)),
+                    $queryBuilder->expr()->in('recuid', $queryBuilder->createNamedParameter($recordUidChunk, Connection::PARAM_INT_ARRAY)),
+                    $queryBuilder->expr()->eq('actiontype', $queryBuilder->createNamedParameter(RecordHistoryStore::ACTION_ADD, Connection::PARAM_INT))
+                )
+                ->orderBy('uid')
+                ->executeQuery()
+                ->fetchAllAssociative();
+
+            foreach ($historyEntries as $historyEntry) {
+                $recordUid = (int)$historyEntry['recuid'];
+                // The first insert entry wins, matching getCreationInformationForRecord()'s
+                // own setMaxResults(1).
+                if (isset($creatorUidPerRecord[$recordUid]) || ($historyEntry['usertype'] ?? '') !== 'BE') {
+                    continue;
+                }
+                $creatorUidPerRecord[$recordUid] = (int)$historyEntry['userid'];
+            }
+        }
+
+        $creatorUids = array_values(array_unique(array_filter($creatorUidPerRecord)));
+        if ($creatorUids === []) {
+            return [];
+        }
+
+        $usersQueryBuilder = $this->connectionPool->getQueryBuilderForTable('be_users');
+        $usersQueryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $users = $usersQueryBuilder
+            ->select('uid', 'username', 'realName')
+            ->from('be_users')
+            ->where($usersQueryBuilder->expr()->in('uid', $usersQueryBuilder->createNamedParameter($creatorUids, Connection::PARAM_INT_ARRAY)))
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $namePerUser = [];
+        foreach ($users as $user) {
+            $namePerUser[(int)$user['uid']] = ((string)($user['realName'] ?? '')) ?: ((string)($user['username'] ?? ''));
+        }
+
+        $authors = [];
+        foreach ($creatorUidPerRecord as $recordUid => $creatorUid) {
+            $authors[$recordUid] = $namePerUser[$creatorUid] ?? '';
+        }
+
+        return $authors;
     }
 
     /**
