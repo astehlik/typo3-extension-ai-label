@@ -22,8 +22,8 @@ tab with two things to fill in:
 Whenever a flagged record is edited again, the review is cleared automatically,
 so changed content always gets a fresh pair of eyes before it counts as checked.
 
-**For visitors**, every flagged content element automatically shows a small AI
-marker on the published page - no template work needed. The icons, wording and
+**For visitors**, a flagged content element automatically shows a small AI marker
+on the published page until it has been reviewed - no template work needed. The icons, wording and
 position can all be replaced with your own. Optionally, flagged **images** can
 carry the marker themselves, either as a layer drawn over the image or burned
 into its pixels so it survives being downloaded - see *Marking images
@@ -62,21 +62,25 @@ This is what the extension maps onto:
 | What the law asks for | How the extension covers it |
 | --- | --- |
 | Record whether content was generated or manipulated by AI | The **AI origin** field, using the law's own wording |
-| Show visitors a clear notice at first sight | The **AI marker**, rendered automatically on every flagged content element |
+| Show visitors a clear notice at first sight | The **AI marker**, rendered automatically on flagged content elements that have not been reviewed; flagged files carry their own marker once `imageMarker` is switched on |
 | Human review with editorial responsibility (the text exception) | The **Reviewed** checkbox, storing who checked it and when |
 | Keep that review meaningful over time | Editing a flagged record **resets** the review automatically |
 | Keep an overview of what is published | The **AI Label** backend module, plus the markers in the List, Filelist and Page modules |
 
 Two things worth knowing:
 
-- **The marker is shown for every flagged record**, including reviewed text.
-  The law would allow you to leave the label off properly reviewed text, but
-  showing it anyway is always permitted and is the safer default. If you want
-  different behaviour, override the `AiLabel` partial (see *Frontend
-  integration* below).
-- **Human review does not remove the duty for images, audio and video.** The
-  exception in Article 50(4) covers text only, so flagged media stays labelled
-  no matter how carefully it was checked.
+- **Reviewing a record drops its marker.** Article 50(4) allows leaving the label
+  off properly reviewed text, and that is what the shipped `AiLabel` partial does:
+  a record is marked while it is flagged and not yet reviewed. Showing the label
+  anyway is always permitted, so if you would rather mark reviewed content too,
+  override the `AiLabel` partial (see *Frontend integration* below).
+- **Human review does not remove the duty for images, audio and video, and the
+  extension does not make that distinction for you.** The exception in Article
+  50(4) covers text only, but the partial decides per *record*, with no CType
+  check - so a reviewed, flagged image element renders no marker either. Where
+  that duty applies, mark the file itself (*Marking images themselves* below,
+  which is flag-only and ignores the review), leave those records unreviewed, or
+  override the partial to skip the review condition for the CTypes concerned.
 
 This extension provides the tooling; it cannot make you compliant on its own.
 Whether a given piece of content falls under Article 50, and whether your review
@@ -172,8 +176,9 @@ What this does for you:
 
 `aiMetadataUpdate()` is the lower-level method the three convenience methods
 above are built on; use it directly if you've already computed the full
-`AiMetadata` state yourself. `$aiMetadata = null` clears the column, same as
-`aiRemoved()`.
+`AiMetadata` state yourself. `$aiMetadata = null` clears the flag, same as
+`aiRemoved()` - it stores an empty JSON value rather than SQL `NULL`, since
+DataHandler coerces a submitted `null` for a json column into `[]`.
 
 ### Registering your own tables
 
@@ -241,9 +246,9 @@ final class PurgeProcessedFileFromCdn
 
 ## Frontend integration
 
-This extension renders a small AI-origin marker on every content element
-that is flagged (`tx_ailabel_origin` = "AI created" or "AI modified"), once
-its TypoScript is included in your project:
+This extension renders a small AI-origin marker on every content element that is
+flagged (`tx_ailabel_origin` = "AI created" or "AI modified") and not yet
+reviewed, once its TypoScript is included in your project:
 
 **Site-Set-based projects** (TYPO3 v13.4+): add `b13/ai-label` to your own
 Site Set's `dependencies` in `config.yaml` (for discoverability/settings
@@ -291,7 +296,10 @@ The `AiLabel` partial (`Resources/Private/Partials/AiLabel.html`):
 - Resolves the current record's `AiMetadata` via `<ailabel:recordMetadata>`
   (or, if a `file` argument is passed, e.g. from your own template,
   `<ailabel:fileMetadata>`).
-- Renders nothing unless `aiMetadata.flagged` is true.
+- Renders nothing unless the metadata says so, and the condition differs per
+  argument: a `record` has to be flagged **and** not reviewed, a `file` only has
+  to be flagged. The automatic integration always passes a `record`; the shipped
+  media partial is what passes a `file`, in `overlay` mode.
 - Outputs one of eight bundled SVG icons
   (`Resources/Public/Icons/ai_generated_*.svg` / `ai_modified_*.svg` -
   `black`/`white` x plain/`_transparent`, selected via the optional `variant`
@@ -303,7 +311,9 @@ The `AiLabel` partial (`Resources/Private/Partials/AiLabel.html`):
   `--ai-label-gridcolumn`, `--ai-label-alignitems`, `--ai-label-zindex`,
   `--ai-label-icon-width`, `--ai-label-icon-height`) - set these on a
   surrounding container in your own CSS to position the marker for a given
-  content element/component; the defaults just anchor it bottom-right.
+  content element/component. `--ai-label-position` and `--ai-label-inset` have no
+  fallback, so by default the marker stays in normal flow below the element,
+  right-aligned; `overlay` mode is what sets them to put it on the image.
 
 ### Marking images themselves
 
@@ -394,9 +404,11 @@ cached like any other processed image. Things to know:
 > required there: without it the command only clears orphaned records and stubs,
 > and leaves exactly the valid, already-rendered variants you need gone).
 
-Both modes are additive to, not a replacement for, the content element marker -
-that keeps rendering either way, which is also what images falling into any of
-the exclusions above fall back to.
+Both modes are additive to, not a replacement for, the content element marker,
+and the two are decided separately: the element marker reads the *record's* own
+flag and review state, so a flagged image inside an unflagged or already reviewed
+element carries the image marker but no element marker. Images falling into any of
+the exclusions above fall back to the element marker alone.
 
 ### Overriding the default markup/icons
 
@@ -458,7 +470,7 @@ unmodified.
 The automatic rendering above is built entirely on the same public building
 blocks documented below - `AiMetadata`, the DataProcessor and the two
 ViewHelpers. Use them directly if you need the flag somewhere the automatic
-Footer hook doesn't reach (e.g. a custom Layout that doesn't use
+`DropIn/After/All` override doesn't reach (e.g. a custom Layout that doesn't use
 `fluid_styled_content`'s `Default` layout, or a per-image marker inside a
 gallery).
 
