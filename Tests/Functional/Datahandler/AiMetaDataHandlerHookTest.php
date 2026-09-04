@@ -34,6 +34,7 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
     protected array $coreExtensionsToLoad = [
         'filelist',
         'fluid_styled_content',
+        'workspaces',
     ];
 
     protected array $testExtensionsToLoad = [
@@ -60,6 +61,51 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
         );
         $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($GLOBALS['BE_USER']);
         $this->dataHandler = GeneralUtility::makeInstance(DataHandler::class);
+    }
+
+    // DataHandler swaps $id to the workspace version between the hook's two methods.
+    #[Test]
+    public function contentChangeInsideAWorkspaceResetsReviewOnTheVersion(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndReviewedRecord.csv');
+        $this->backendUser->workspace = 1;
+
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'header' => 'Changed inside the workspace',
+                    'tx_ailabel_origin' => 1,
+                    'tx_ailabel_reviewed' => 1,
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/ContentChangeInWorkspaceResetsReviewOnVersionResult.csv');
+    }
+
+    #[Test]
+    public function originChangeInsideAWorkspaceLandsOnTheVersion(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndReviewedRecord.csv');
+        $this->backendUser->workspace = 1;
+
+        // No content change, so the review stays with whoever gave it.
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'tx_ailabel_origin' => 2,
+                    'tx_ailabel_reviewed' => 1,
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/OriginChangeInWorkspaceLandsOnVersionResult.csv');
     }
 
     #[Test]
