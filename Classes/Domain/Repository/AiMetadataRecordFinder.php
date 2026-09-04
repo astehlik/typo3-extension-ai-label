@@ -18,13 +18,13 @@ use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
 use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
+use TYPO3\CMS\Backend\Tree\Repository\PageTreeRepository;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\QueryBuilder;
-use TYPO3\CMS\Core\Database\Query\QueryHelper;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
 use TYPO3\CMS\Core\Imaging\IconFactory;
@@ -57,6 +57,11 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 // an 'editable' flag callers use to decide whether to link it for editing.
 final class AiMetadataRecordFinder
 {
+    private const PAGE_TREE_DEPTH = 99;
+
+    /** @var list<int>|null Resolved once, the finder walks every applicable table. */
+    private ?array $accessiblePageIds = null;
+
     public function __construct(
         private readonly ConnectionPool $connectionPool,
         private readonly ApplicableTablesProvider $applicableTablesProvider,
@@ -213,32 +218,76 @@ final class AiMetadataRecordFinder
             return false;
         }
 
-        if ($table === 'pages') {
-            $permissionClause = $backendUser->getPagePermsClause(Permission::PAGE_SHOW);
-            $queryBuilder->andWhere(QueryHelper::stripLogicalOperatorPrefix($permissionClause));
-            return true;
-        }
-
         if ($this->livesOnRootLevelOnly($table)) {
-            // pid is always 0 here, so page permissions say nothing. File metadata is
-            // scoped by the user's file mounts instead; any other root-level table a
-            // project registered has no boundary this class could know about, so it
-            // stays admin-only rather than being guessed at.
+            // pid is always 0 here. File metadata is scoped by file mounts, any other
+            // root-level table has no boundary to scope by and stays admin-only.
             return $table === 'sys_file_metadata'
                 && $this->constrainToFileMounts($queryBuilder, $backendUser);
         }
 
-        $pagesQueryBuilder = $this->connectionPool->getConnectionForTable('pages')->createQueryBuilder();
-        $pagesQueryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
-        $pagesQueryBuilder
-            ->select('uid')
-            ->from('pages')
-            ->where(QueryHelper::stripLogicalOperatorPrefix($backendUser->getPagePermsClause(Permission::PAGE_SHOW)));
-        // getPagePermsClause() builds its values into the SQL itself, so this subquery
-        // carries no parameters of its own to merge into the outer query.
-        $queryBuilder->andWhere($queryBuilder->expr()->in('pid', '(' . $pagesQueryBuilder->getSQL() . ')'));
+        $accessiblePageIds = $this->resolveAccessiblePageIds($backendUser);
+        if ($accessiblePageIds === []) {
+            return false;
+        }
+
+        $pageIdParameter = $queryBuilder->createNamedParameter($accessiblePageIds, Connection::PARAM_INT_ARRAY);
+        if ($table !== 'pages') {
+            $queryBuilder->andWhere($queryBuilder->expr()->in('pid', $pageIdParameter));
+
+            return true;
+        }
+
+        // Pages carry access on the record itself. A translation is its own row with its
+        // own uid, and the accessible ids only ever contain default language pages, so it
+        // has to be matched through its parent as well.
+        $pageConstraints = [$queryBuilder->expr()->in('uid', $pageIdParameter)];
+        $schema = $this->tcaSchemaFactory->get($table);
+        if ($schema->hasCapability(TcaSchemaCapability::Language)) {
+            $pageConstraints[] = $queryBuilder->expr()->in(
+                $schema->getCapability(TcaSchemaCapability::Language)->getTranslationOriginPointerField()->getName(),
+                $pageIdParameter
+            );
+        }
+        $queryBuilder->andWhere($queryBuilder->expr()->or(...$pageConstraints));
 
         return true;
+    }
+
+    /**
+     * Pages reachable from the user's web mounts, or null for an admin. The permission
+     * clause alone is not the same thing: bits can pass on pages outside every mount.
+     *
+     * @return list<int>|null
+     */
+    private function resolveAccessiblePageIds(BackendUserAuthentication $backendUser): ?array
+    {
+        if ($backendUser->isAdmin()) {
+            return null;
+        }
+        if ($this->accessiblePageIds !== null) {
+            return $this->accessiblePageIds;
+        }
+
+        $webMounts = $backendUser->getWebmounts();
+        if ($webMounts === []) {
+            return $this->accessiblePageIds = [];
+        }
+
+        // Without the workspace the repository's own WorkspaceRestriction drops pages that
+        // exist only in this workspace, and with them every record on such a page.
+        $pageTreeRepository = GeneralUtility::makeInstance(
+            PageTreeRepository::class,
+            (int)$this->context->getPropertyFromAspect('workspace', 'id')
+        );
+        $pageTreeRepository->setAdditionalWhereClause($backendUser->getPagePermsClause(Permission::PAGE_SHOW));
+
+        // The mounts themselves are accessible, the walk adds what is below them.
+        $pageIds = $webMounts;
+        foreach ($pageTreeRepository->getFlattenedPages($webMounts, self::PAGE_TREE_DEPTH) as $page) {
+            $pageIds[] = (int)$page['uid'];
+        }
+
+        return $this->accessiblePageIds = array_values(array_unique($pageIds));
     }
 
     private function constrainToFileMounts(QueryBuilder $queryBuilder, BackendUserAuthentication $backendUser): bool
