@@ -20,16 +20,21 @@ use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use TYPO3\CMS\Backend\History\RecordHistory;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\QueryBuilder;
+use TYPO3\CMS\Core\Database\Query\QueryHelper;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Localization\LanguageService;
+use TYPO3\CMS\Core\Schema\Capability\RootLevelCapability;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\TcaSchema;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Versioning\VersionState;
 
@@ -140,6 +145,10 @@ final class AiMetadataRecordFinder
             ->from($table)
             ->where($queryBuilder->expr()->isNotNull('tx_ailabel_metadata'));
 
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
+        }
+
         if ($pid !== null) {
             $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
         }
@@ -175,7 +184,110 @@ final class AiMetadataRecordFinder
             $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
         }
 
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
+        }
+
         return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * Restricts the query to what this user may see, and says whether anything is
+     * visible at all.
+     */
+    private function applyPermissionConstraints(QueryBuilder $queryBuilder, string $table): bool
+    {
+        $backendUser = $this->getBackendUser();
+        if ($backendUser === null) {
+            return false;
+        }
+        if ($backendUser->isAdmin()) {
+            return true;
+        }
+        if (!$backendUser->check('tables_select', $table)) {
+            return false;
+        }
+
+        if ($table === 'pages') {
+            $permissionClause = $backendUser->getPagePermsClause(Permission::PAGE_SHOW);
+            $queryBuilder->andWhere(QueryHelper::stripLogicalOperatorPrefix($permissionClause));
+            return true;
+        }
+
+        if ($this->livesOnRootLevelOnly($table)) {
+            // pid is always 0 here, so page permissions say nothing. File metadata is
+            // scoped by the user's file mounts instead; any other root-level table a
+            // project registered has no boundary this class could know about, so it
+            // stays admin-only rather than being guessed at.
+            return $table === 'sys_file_metadata'
+                && $this->constrainToFileMounts($queryBuilder, $backendUser);
+        }
+
+        $pagesQueryBuilder = $this->connectionPool->getConnectionForTable('pages')->createQueryBuilder();
+        $pagesQueryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $pagesQueryBuilder
+            ->select('uid')
+            ->from('pages')
+            ->where(QueryHelper::stripLogicalOperatorPrefix($backendUser->getPagePermsClause(Permission::PAGE_SHOW)));
+        // getPagePermsClause() builds its values into the SQL itself, so this subquery
+        // carries no parameters of its own to merge into the outer query.
+        $queryBuilder->andWhere($queryBuilder->expr()->in('pid', '(' . $pagesQueryBuilder->getSQL() . ')'));
+
+        return true;
+    }
+
+    private function constrainToFileMounts(QueryBuilder $queryBuilder, BackendUserAuthentication $backendUser): bool
+    {
+        $fileMounts = $backendUser->getFileMountRecords();
+        if ($fileMounts === []) {
+            return false;
+        }
+
+        $filesQueryBuilder = $this->connectionPool->getConnectionForTable('sys_file')->createQueryBuilder();
+        $filesQueryBuilder->getRestrictions()->removeAll();
+        $mountConstraints = [];
+        foreach ($fileMounts as $fileMount) {
+            $mountConstraints[] = $filesQueryBuilder->expr()->and(
+                $filesQueryBuilder->expr()->eq(
+                    'storage',
+                    $queryBuilder->createNamedParameter((int)($fileMount['base'] ?? 0), Connection::PARAM_INT)
+                ),
+                $filesQueryBuilder->expr()->like(
+                    'identifier',
+                    $queryBuilder->createNamedParameter(
+                        $queryBuilder->escapeLikeWildcards((string)($fileMount['path'] ?? '/')) . '%'
+                    )
+                )
+            );
+        }
+
+        // Parameters go on the outer query builder, the one actually executed.
+        $filesQueryBuilder
+            ->select('uid')
+            ->from('sys_file')
+            ->where($filesQueryBuilder->expr()->or(...$mountConstraints));
+        $queryBuilder->andWhere($queryBuilder->expr()->in('file', '(' . $filesQueryBuilder->getSQL() . ')'));
+
+        return true;
+    }
+
+    private function livesOnRootLevelOnly(string $table): bool
+    {
+        if (!$this->tcaSchemaFactory->has($table)) {
+            return false;
+        }
+        $schema = $this->tcaSchemaFactory->get($table);
+        if (!$schema->hasCapability(TcaSchemaCapability::RestrictionRootLevel)) {
+            return false;
+        }
+        $capability = $schema->getCapability(TcaSchemaCapability::RestrictionRootLevel);
+
+        return $capability->getRootLevelType() === RootLevelCapability::TYPE_ONLY_ON_ROOTLEVEL;
+    }
+
+    private function getBackendUser(): ?BackendUserAuthentication
+    {
+        return $GLOBALS['BE_USER'] ?? null;
     }
 
     /**
