@@ -345,11 +345,28 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
 
 ## Testing
 
-- Functional tests only (`typo3/testing-framework`), no unit tests. Run:
+- Functional tests only (`typo3/testing-framework`), no unit tests. Everything runs
+  through `Build/Scripts/runTests.sh`, which uses the TYPO3 Core CI images, so no
+  local PHP is needed. The one exception is `-s phpstan13`, which analyses whatever
+  sits in `.Build` and therefore needs the v13 dependency set installed first
+  (`composer require typo3/cms-backend:^13.4 --dev -W`); against a v14 `.Build` its
+  baseline no longer matches and it reports unrelated errors:
   ```
-  php -d memory_limit=2G .Build/bin/phpunit -c Build/phpunit/FunctionalTests.xml Tests/Functional
-  php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan.neon
+  Build/Scripts/runTests.sh                              # functional, MySQL
+  Build/Scripts/runTests.sh -s functional -d sqlite      # or -d mariadb
+  Build/Scripts/runTests.sh -s phpstan                   # -s phpstan13, cgl, lint
+  Build/Scripts/runTests.sh -- --filter tickingReviewed   # arguments go to phpunit
   ```
+  What is installed in `.Build` has to fit the PHP version the script picks (`-p`,
+  default 8.4): composer resolves phpunit against the PHP that installed it, and a
+  phpunit built for 8.4 refuses to start on 8.2.
+- **The suite is only green on MySQL.** The JSON fixtures are written the way MySQL
+  returns a `json` column, with a space after every colon
+  (`{"origin": 1, "reviewed_by": 0}`); MariaDB and SQLite hand the string back as
+  stored, and `assertCSVDataSet` compares raw strings, so a couple of dozen tests fail
+  on those engines for that reason alone. Worth running anyway: SQLite accepts a double-quoted
+  unknown column as a string literal instead of erroring, which is exactly what hid
+  the missing table guard in `AiMetaDataHandlerHook` from every SQLite run.
 - **CI (`.github/workflows/ci.yml`) runs the matrix against both TYPO3 versions**, and
   phpstan needs a *second*, separate config for v13: `Build/phpstan13.neon` (level 5,
   same `Classes` path) plus `Build/phpstan13-baseline.neon` - the baseline exists because
