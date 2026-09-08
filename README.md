@@ -201,6 +201,14 @@ final class RegisterMyTableForAiLabel
 (`removeApplicableTable()` is available too, if you need to opt a default
 table back out.)
 
+Run a database compare afterwards, in the Install Tool or with
+`bin/typo3 database:updateschema`: the `tx_ailabel_metadata` column is created
+from TCA, so a registered table without it breaks with
+`Unknown column 'tx_ailabel_metadata'` as soon as anything touches it - saving a
+record, listing the table in Web > List, and the AI Label module for every table,
+not just the new one. Tables you have not registered are left alone entirely and
+need nothing.
+
 ### Extending the overview module's record list
 
 `AiMetadataRecordFinder` (used by the overview module and by the flagged-content
