@@ -399,4 +399,29 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
         self::assertNotEmpty($historyEntries, 'Expected at least one sys_history entry for tt_content:1');
         self::assertStringContainsString('tx_ailabel_metadata', $historyEntries[0]['history_data']);
     }
+
+    /**
+     * The update path runs without stashed values by design, which used to make it
+     * read tx_ailabel_metadata on every saved table, including the ones this
+     * extension does not cover and which therefore have no such column. MariaDB
+     * and MySQL report the unknown column, SQLite reads it as a string literal and
+     * hides the failure.
+     */
+    #[Test]
+    public function savingATableTheExtensionDoesNotCoverKeepsWorking(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/NonApplicableTableRecord.csv');
+        $data = [
+            'sys_category' => [
+                1 => [
+                    'title' => 'Renamed without ai fields',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertSame([], $this->dataHandler->errorLog);
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/SavingNonApplicableTableKeepsWorkingResult.csv');
+    }
 }

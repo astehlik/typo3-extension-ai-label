@@ -72,6 +72,13 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
     `$fieldArray['tx_ailabel_metadata']` as a **plain PHP array** (DataHandler/Doctrine
     JSON-encode it themselves for json-typed columns - encoding it yourself
     double-encodes it).
+- Both hook methods are called for **every** table DataHandler saves. The pre hook
+  filters itself by the two virtual fields; the post hook cannot, because its update
+  path deliberately runs even when a save carries no ai fields (imports, scheduler),
+  so it filters by `ApplicableTablesProvider::isTableApplicable()` instead. Without
+  that it reads `tx_ailabel_metadata` on tables that have no such column, which
+  MySQL/MariaDB reject with "Unknown column" while SQLite quietly answers with the
+  column name as a string literal.
 - Business rule: as long as a record is flagged, a save that changes real content resets
   `reviewed_by` to 0 - *unless* that same save also actively ticks "reviewed" from
   unreviewed to reviewed ("reviewed wins"). Reviewed merely *staying* ticked (checkbox

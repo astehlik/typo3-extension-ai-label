@@ -12,6 +12,7 @@ namespace B13\AiLabel\Hooks;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Enum\AiOrigin;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Imaging\ProcessedFileInvalidator;
@@ -62,6 +63,7 @@ final class AiMetaDataHandlerHook
         private readonly Context $context,
         private readonly TcaSchemaFactory $tcaSchemaFactory,
         private readonly ProcessedFileInvalidator $processedFileInvalidator,
+        private readonly ApplicableTablesProvider $applicableTablesProvider,
     ) {
     }
 
@@ -108,6 +110,13 @@ final class AiMetaDataHandlerHook
         array &$fieldArray,
         DataHandler $dataHandler
     ): void {
+        // The update path below runs even when this save carries no ai fields, so
+        // without this it would read tx_ailabel_metadata on every saved table,
+        // including those without that column.
+        if (!$this->applicableTablesProvider->isTableApplicable($table)) {
+            return;
+        }
+
         $pendingAiMetadata = $this->takePendingValue($table, $id, $dataHandler);
 
         // New records never have an existing/previously-reviewed state to reconcile
