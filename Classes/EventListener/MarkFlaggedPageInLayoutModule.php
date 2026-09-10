@@ -12,6 +12,7 @@ namespace B13\AiLabel\EventListener;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
 use B13\AiLabel\Service\AiLabelAccessChecker;
@@ -45,11 +46,17 @@ final class MarkFlaggedPageInLayoutModule
         private readonly PageRenderer $pageRenderer,
         private readonly UriBuilder $uriBuilder,
         private readonly AiLabelAccessChecker $accessChecker,
+        private readonly ApplicableTablesProvider $tableProvider,
     ) {
     }
 
     public function __invoke(ModifyPageLayoutContentEvent $event): void
     {
+        // If table "pages" is not applicable, ignore the modification
+        if (!$this->tableProvider->isTableApplicable('pages')) {
+            return;
+        }
+        
         $request = $event->getRequest();
         $pageId = (int)($request->getQueryParams()['id'] ?? $request->getParsedBody()['id'] ?? 0);
         if ($pageId <= 0) {
