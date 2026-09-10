@@ -219,10 +219,10 @@ final class AiMetadataRecordFinder
         }
 
         if ($this->livesOnRootLevelOnly($table)) {
-            // pid is always 0 here. File metadata is scoped by file mounts, any other
-            // root-level table has no boundary to scope by and stays admin-only.
-            return $table === 'sys_file_metadata'
-                && $this->constrainToFileMounts($queryBuilder, $backendUser);
+            // pid is always 0 here, so there is nothing to scope in SQL. File metadata is
+            // checked per row by AiLabelAccessChecker (file mounts and file permissions);
+            // any other root-level table has no boundary here and stays admin-only.
+            return $table === 'sys_file_metadata';
         }
 
         $accessiblePageIds = $this->resolveAccessiblePageIds($backendUser);
@@ -288,41 +288,6 @@ final class AiMetadataRecordFinder
         }
 
         return $this->accessiblePageIds = array_values(array_unique($pageIds));
-    }
-
-    private function constrainToFileMounts(QueryBuilder $queryBuilder, BackendUserAuthentication $backendUser): bool
-    {
-        $fileMounts = $backendUser->getFileMountRecords();
-        if ($fileMounts === []) {
-            return false;
-        }
-
-        $filesQueryBuilder = $this->connectionPool->getConnectionForTable('sys_file')->createQueryBuilder();
-        $filesQueryBuilder->getRestrictions()->removeAll();
-        $mountConstraints = [];
-        foreach ($fileMounts as $fileMount) {
-            $mountConstraints[] = $filesQueryBuilder->expr()->and(
-                $filesQueryBuilder->expr()->eq(
-                    'storage',
-                    $queryBuilder->createNamedParameter((int)($fileMount['base'] ?? 0), Connection::PARAM_INT)
-                ),
-                $filesQueryBuilder->expr()->like(
-                    'identifier',
-                    $queryBuilder->createNamedParameter(
-                        $queryBuilder->escapeLikeWildcards((string)($fileMount['path'] ?? '/')) . '%'
-                    )
-                )
-            );
-        }
-
-        // Parameters go on the outer query builder, the one actually executed.
-        $filesQueryBuilder
-            ->select('uid')
-            ->from('sys_file')
-            ->where($filesQueryBuilder->expr()->or(...$mountConstraints));
-        $queryBuilder->andWhere($queryBuilder->expr()->in('file', '(' . $filesQueryBuilder->getSQL() . ')'));
-
-        return true;
     }
 
     private function livesOnRootLevelOnly(string $table): bool
