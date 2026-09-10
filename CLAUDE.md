@@ -472,7 +472,15 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
    */
   ```
   on every PHP file, including tests.
-- English comments only, and only where the *why* isn't obvious from the code.
+- English comments only, and as short as possible. The readers are TYPO3 experts: never
+  describe what a core API does, how DataHandler/FormEngine/FAL work, or what the code
+  plainly says. No background, no bug histories, no measurements, no rejected-alternative
+  essays. Comment only the non-obvious thing about *this* functionality - typically a
+  constraint that would otherwise be refactored away (e.g. "an explicit write of the column
+  wins", "the mounts are the entry point, the permission clause alone lets outside pages
+  pass"). One or two lines is the norm, a docblock of five is already long.
+  Note that comments written before 2026-09 are far more verbose than this; match the rule,
+  not the surrounding style, and shorten what you touch.
 - No double-quoted string interpolation (`"$table:$id"`) - use concatenation
   (`$table . ':' . $id`).
 - Prefer the domain object's own accessors over re-deriving booleans/values inline

@@ -56,7 +56,7 @@ class AiMetadataRecordFinderQueryScopeTest extends FunctionalTestCase
         self::assertSame([1], $this->findFlaggedUids());
     }
 
-    // Allowed onto the page, but not to select tt_content.
+    // Page 1 grants show to everybody, so tables_select is the only thing left to fail on.
     #[Test]
     public function anEditorWithoutTableAccessSeesNothing(): void
     {
