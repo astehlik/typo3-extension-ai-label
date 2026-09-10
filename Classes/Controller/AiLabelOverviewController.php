@@ -66,7 +66,10 @@ final class AiLabelOverviewController
         $pageItems = array_map(
             fn (array $record): array => [
                 ...$record,
-                'reviewBadge' => $this->badgeFactory->getBadge($record['metadata'], $this->buildEditUrl($record['table'], $record['uid'], $returnUrl)),
+                'reviewBadge' => $this->badgeFactory->getBadge(
+                    $record['metadata'],
+                    $record['editable'] ? $this->buildEditUrl($record['table'], $record['uid'], $returnUrl) : null,
+                ),
             ],
             $pageItems,
         );

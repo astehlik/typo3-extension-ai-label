@@ -109,6 +109,13 @@ is not legal advice.
   (re-)ticks "reviewed".
 - The "AI Label" backend module (Web menu) and the record/file list markers are
   workspace-aware, resolving records for the currently selected workspace.
+- The overview module (and the Page/Layout module's flagged-content badges) is
+  permission-aware for non-admin backend users: a record only shows up if its page
+  is inside the user's DB mount and readable (`sys_file_metadata`: its file inside a
+  mounted file storage/folder and readable), and only links to editing it if it's
+  actually editable - the same rules the Web > List/File > Filelist modules already
+  apply, just re-checked here since this module queries across the whole site
+  directly instead of going through those modules' own listings.
 - The two form fields carry TCA `description` texts explaining the Article 50
   duties in plain language, plus a palette description above them
   (`AddAiMetaFieldsToTca`, labels in `locallang_db.xlf`).

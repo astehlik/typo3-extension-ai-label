@@ -15,6 +15,7 @@ namespace B13\AiLabel\Domain\Repository;
 use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
+use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use TYPO3\CMS\Backend\History\RecordHistory;
@@ -43,6 +44,12 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 // this workspace. Never leaks another workspace's drafts. BackendUtility::
 // workspaceOL() itself already no-ops entirely if EXT:workspaces isn't loaded or
 // the workspace is live (id 0), so this stays a no-op extra query in that case.
+//
+// Also permission-aware for non-admin backend users, via AiLabelAccessChecker:
+// records the user isn't allowed to read (page outside their DB mount / not
+// PAGE_SHOW-able, sys_file_metadata whose file sits outside their FS mount or file
+// permissions) never make it into the result at all - each remaining record carries
+// an 'editable' flag callers use to decide whether to link it for editing.
 final class AiMetadataRecordFinder
 {
     public function __construct(
@@ -53,10 +60,11 @@ final class AiMetadataRecordFinder
         private readonly TcaSchemaFactory $tcaSchemaFactory,
         private readonly IconFactory $iconFactory,
         private readonly EventDispatcherInterface $eventDispatcher,
+        private readonly AiLabelAccessChecker $accessChecker,
     ) {
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> */
+    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> */
     public function findFlaggedRecords(): array
     {
         $records = [];
@@ -71,7 +79,7 @@ final class AiMetadataRecordFinder
      * Only tt_content, only on this one page - used to fold "review required"/
      * "reviewed by X on Y" badges into the Page module's content element headers.
      *
-     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}>
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
      */
     public function findFlaggedContentElementsOnPage(int $pageId): array
     {
@@ -82,7 +90,7 @@ final class AiMetadataRecordFinder
         return $this->findFlaggedRecordsForTable('tt_content', $pageId);
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> */
+    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> */
     private function findFlaggedRecordsForTable(string $table, ?int $pid): array
     {
         $workspaceId = (int)$this->context->getPropertyFromAspect('workspace', 'id');
@@ -180,8 +188,8 @@ final class AiMetadataRecordFinder
      * blob, and filtering on its decoded content isn't portable across
      * MySQL/SQLite/Postgres without per-database JSON path functions.
      *
-     * @param list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> $records
-     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}>
+     * @param list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> $records
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
      */
     public function filterAndSort(array $records, AiLabelDemand $demand): array
     {
@@ -295,6 +303,9 @@ final class AiMetadataRecordFinder
         if (!$metadata->isFlagged()) {
             return null;
         }
+        if (!$this->accessChecker->isReadable($table, $row)) {
+            return null;
+        }
 
         $record = [
             'table' => $table,
@@ -317,6 +328,7 @@ final class AiMetadataRecordFinder
             // built here instead of the Fluid template so the "review required" vs
             // "reviewed by X on Y" wording/color can't drift apart between the two.
             'reviewBadge' => $this->badgeFactory->getBadge($metadata),
+            'editable' => $this->accessChecker->isEditable($table, $row),
         ];
 
         $event = new AfterRecordIsBuiltEvent($record, $row);

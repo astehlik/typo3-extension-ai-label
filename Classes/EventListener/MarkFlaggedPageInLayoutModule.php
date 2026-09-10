@@ -14,6 +14,7 @@ namespace B13\AiLabel\EventListener;
 
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
+use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use TYPO3\CMS\Backend\Controller\Event\ModifyPageLayoutContentEvent;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
@@ -43,6 +44,7 @@ final class MarkFlaggedPageInLayoutModule
         private readonly AiMetadataRecordFinder $recordFinder,
         private readonly PageRenderer $pageRenderer,
         private readonly UriBuilder $uriBuilder,
+        private readonly AiLabelAccessChecker $accessChecker,
     ) {
     }
 
@@ -60,16 +62,16 @@ final class MarkFlaggedPageInLayoutModule
         $returnUrl = (string)$request->getUri();
         $headerContent = '';
 
-        $row = BackendUtility::getRecord('pages', $pageId, 'tx_ailabel_metadata');
+        $row = BackendUtility::getRecord('pages', $pageId);
         $pageMetadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
         if ($pageMetadata->isFlagged()) {
-            $href = $this->buildEditUrl('pages', $pageId, $returnUrl);
+            $href = $this->accessChecker->isEditable('pages', $row) ? $this->buildEditUrl('pages', $pageId, $returnUrl) : null;
             $headerContent .= '<div class="ai-label-page-marker">' . $this->badgeFactory->getBadge($pageMetadata, $href) . '</div>';
         }
 
         $contentBadges = [];
         foreach ($this->recordFinder->findFlaggedContentElementsOnPage($pageId) as $record) {
-            $href = $this->buildEditUrl('tt_content', $record['uid'], $returnUrl);
+            $href = $record['editable'] ? $this->buildEditUrl('tt_content', $record['uid'], $returnUrl) : null;
             $contentBadges[$record['uid']] = $this->badgeFactory->getBadge($record['metadata'], $href);
         }
         if ($contentBadges !== []) {
