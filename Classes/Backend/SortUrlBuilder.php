@@ -31,9 +31,10 @@ final class SortUrlBuilder
     /**
      * @return array<string, array{ascUrl: string, descUrl: string, active: bool, direction: string}>
      */
-    public function build(AiLabelDemand $demand, string $route): array
+    public function build(AiLabelDemand $demand, string $route, int $pageId): array
     {
-        $filterParams = [];
+        // sorting must not drop the page-tree scope currently selected.
+        $filterParams = ['id' => $pageId];
         foreach ($demand->getParameters() as $key => $value) {
             $filterParams['demand[' . $key . ']'] = $value;
         }

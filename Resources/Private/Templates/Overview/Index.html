@@ -40,7 +40,7 @@
                         state="{severityInfo.value}"
                     >
                         <p><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.noEntries.filtered" /></p>
-                        <a href="{f:be.uri(route: 'web_ai_label_overview')}" class="btn btn-default">
+                        <a href="{f:be.uri(route: 'web_ai_label_overview', parameters: '{id: pageId}')}" class="btn btn-default">
                             <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:filter.reset" />
                         </a>
                     </f:be.infobox>

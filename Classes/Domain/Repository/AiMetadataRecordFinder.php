@@ -23,6 +23,7 @@ use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\QueryBuilder;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
@@ -35,8 +36,10 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 
 // Collects records across the applicable tables whose tx_ailabel_metadata marks them
 // as flagged (AI-created or AI-modified). Not an Extbase repository, no persistence layer in
-// use here - just a plain query helper, used by the overview module (site-wide)
-// and MarkFlaggedPageInLayoutModule (single page, tt_content only).
+// use here - just a plain query helper, used by the overview module (site-wide, or
+// scoped to a page plus its recursive subpages once a page is selected in its
+// navigation component - see PageTreeScopeResolver) and MarkFlaggedPageInLayoutModule
+// (single page, tt_content only, never recursive).
 //
 // Workspace-aware: only ever shows what the current backend user would actually
 // see for their active workspace - the live version (or its workspace-overlaid
@@ -64,12 +67,15 @@ final class AiMetadataRecordFinder
     ) {
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> */
-    public function findFlaggedRecords(): array
+    /**
+     * @param list<int>|null $pageIds Restricts the result to a page-tree scope
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
+     */
+    public function findFlaggedRecords(?array $pageIds = null): array
     {
         $records = [];
         foreach ($this->applicableTablesProvider->getApplicableTables() as $table) {
-            $records = array_merge($records, $this->findFlaggedRecordsForTable($table, null));
+            $records = array_merge($records, $this->findFlaggedRecordsForTable($table, $pageIds));
         }
 
         return $records;
@@ -87,11 +93,14 @@ final class AiMetadataRecordFinder
             return [];
         }
 
-        return $this->findFlaggedRecordsForTable('tt_content', $pageId);
+        return $this->findFlaggedRecordsForTable('tt_content', [$pageId]);
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> */
-    private function findFlaggedRecordsForTable(string $table, ?int $pid): array
+    /**
+     * @param list<int>|null $pageIds
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
+     */
+    private function findFlaggedRecordsForTable(string $table, ?array $pageIds): array
     {
         $workspaceId = (int)$this->context->getPropertyFromAspect('workspace', 'id');
         $isVersionable = $this->tcaSchemaFactory->has($table)
@@ -99,7 +108,7 @@ final class AiMetadataRecordFinder
 
         $records = [];
 
-        foreach ($this->findLiveRows($table, $pid, $isVersionable) as $row) {
+        foreach ($this->findLiveRows($table, $pageIds, $isVersionable) as $row) {
             if ($isVersionable && $workspaceId > 0) {
                 BackendUtility::workspaceOL($table, $row, $workspaceId);
                 if ($row === false) {
@@ -119,7 +128,7 @@ final class AiMetadataRecordFinder
         }
 
         if ($isVersionable && $workspaceId > 0) {
-            foreach ($this->findNewInWorkspace($table, $pid, $workspaceId) as $row) {
+            foreach ($this->findNewInWorkspace($table, $pageIds, $workspaceId) as $row) {
                 $record = $this->buildRecord($table, $row);
                 if ($record !== null) {
                     $records[] = $record;
@@ -130,8 +139,11 @@ final class AiMetadataRecordFinder
         return $records;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function findLiveRows(string $table, ?int $pid, bool $isVersionable): array
+    /**
+     * @param list<int>|null $pageIds
+     * @return list<array<string, mixed>>
+     */
+    private function findLiveRows(string $table, ?array $pageIds, bool $isVersionable): array
     {
         $queryBuilder = $this->connectionPool->getConnectionForTable($table)->createQueryBuilder();
         $queryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
@@ -140,8 +152,8 @@ final class AiMetadataRecordFinder
             ->from($table)
             ->where($queryBuilder->expr()->isNotNull('tx_ailabel_metadata'));
 
-        if ($pid !== null) {
-            $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
+        if ($pageIds !== null) {
+            $this->constrainToPageScope($queryBuilder, $table, $pageIds);
         }
 
         if ($isVersionable) {
@@ -157,9 +169,10 @@ final class AiMetadataRecordFinder
      * Records that only exist as a brand new version inside this workspace - they have
      * no live counterpart yet, so findLiveRows()/workspaceOL() never surfaces them.
      *
+     * @param list<int>|null $pageIds
      * @return list<array<string, mixed>>
      */
-    private function findNewInWorkspace(string $table, ?int $pid, int $workspaceId): array
+    private function findNewInWorkspace(string $table, ?array $pageIds, int $workspaceId): array
     {
         $queryBuilder = $this->connectionPool->getConnectionForTable($table)->createQueryBuilder();
         $queryBuilder
@@ -171,11 +184,23 @@ final class AiMetadataRecordFinder
                 $queryBuilder->expr()->eq('t3ver_state', $queryBuilder->createNamedParameter(VersionState::NEW_PLACEHOLDER->value, Connection::PARAM_INT))
             );
 
-        if ($pid !== null) {
-            $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
+        if ($pageIds !== null) {
+            $this->constrainToPageScope($queryBuilder, $table, $pageIds);
         }
 
         return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * @param list<int> $pageIds
+     */
+    private function constrainToPageScope(QueryBuilder $queryBuilder, string $table, array $pageIds): void
+    {
+        $column = $table === 'pages' ? 'uid' : 'pid';
+        $queryBuilder->andWhere($queryBuilder->expr()->in(
+            $column,
+            $queryBuilder->createNamedParameter($pageIds, Connection::PARAM_INT_ARRAY)
+        ));
     }
 
     /**
@@ -248,7 +273,9 @@ final class AiMetadataRecordFinder
     }
 
     /**
-     * Site-wide counts across ALL flagged records, ignoring the current demand's filters.
+     * Counts across ALL flagged records the caller passes in, ignoring the current
+     * demand's filters - site-wide if $records came from findFlaggedRecords(null),
+     * or scoped to a page-tree selection if it came from findFlaggedRecords($pageIds).
      *
      * @param list<array{metadata: AiMetadata}> $records
      * @return array{total: int, created: int, modified: int, reviewRequired: int, reviewed: int}

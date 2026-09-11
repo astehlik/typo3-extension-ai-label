@@ -153,9 +153,30 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
 ## Backend UI
 
 - The overview module (`Configuration/Backend/Modules.php`) sets
-  `'inheritNavigationComponentFromMainModule' => false` - it's not page-tree-scoped
-  (lists flagged records across the whole site), so it shouldn't show the Web module's
-  page tree in the navigation component.
+  `'inheritNavigationComponentFromMainModule' => true` (explicit user request,
+  2026-09-11, reversing the original design) - it shows the Web module's page tree.
+  Selecting a page scopes the listing to that page plus its recursive subpages;
+  no selection (or the virtual root, `id=0`) keeps the original site-wide listing.
+  `AiLabelOverviewController::handleRequest()` reads the standard `id` request
+  parameter straight off the request itself (same convention core uses for every
+  page-tree-bound module) - deliberately **not** modeled as a field on `AiLabelDemand`,
+  which stays scoped to filter/sort/paging state only. Every URL the module builds
+  (the pagination base URL, the sort links, the filter form's own `action`, the
+  "reset filters" links) is a link back to this same module route, so baking `id`
+  into each of those `f:be.uri`/`buildUriFromRoute()` calls directly keeps the
+  page-tree selection intact across a request with zero extra state to thread through
+  - no hidden form field, no demand property to keep in sync.
+  `B13\AiLabel\Backend\PageTreeScopeResolver` turns that single page id into the
+  recursive page-id list via `PageRepository::getPageIdsRecursive()` (confirmed
+  version-safe: unchanged signature since long before v13), returning `null` for
+  "no page selected" (id `<= 0`). `AiMetadataRecordFinder::findFlaggedRecords(?array
+  $pageIds)` applies that list at the DB level, per table: `uid IN (...)` for the
+  `pages` table itself (its `pid` only ever points at its *parent*, so filtering
+  pages by `pid` would drop the selected page and only ever match its direct
+  children), `pid IN (...)` for everything else. The scope is applied to the single
+  `findFlaggedRecords()` call the statistics/distinct-table options and the filtered
+  listing are all derived from, so selecting a page scopes all of those together,
+  not just the listing rows.
 - `AiMetadataBadgeFactory::getBadge()` is the single source of truth for label/color
   (`ReviewStatus` value object) - used by the record list/file list dropdowns, the layout
   module badges, the form legend (`VirtualCheckboxElement`), and the overview module.

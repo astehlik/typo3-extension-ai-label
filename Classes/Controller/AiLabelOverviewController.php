@@ -12,6 +12,7 @@ namespace B13\AiLabel\Controller;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Backend\PageTreeScopeResolver;
 use B13\AiLabel\Backend\SortUrlBuilder;
 use B13\AiLabel\Domain\Repository\AiLabelDemand;
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
@@ -24,6 +25,8 @@ use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Template\Components\ButtonBar;
 use TYPO3\CMS\Backend\Template\Components\Buttons\Action\ShortcutButton;
 use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Localization\LanguageService;
 use TYPO3\CMS\Core\Pagination\SimplePagination;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -39,6 +42,7 @@ final class AiLabelOverviewController
         private readonly AiMetadataBadgeFactory $badgeFactory,
         private readonly UriBuilder $uriBuilder,
         private readonly SortUrlBuilder $sortUrlBuilder,
+        private readonly PageTreeScopeResolver $pageTreeScopeResolver,
     ) {
     }
 
@@ -48,13 +52,14 @@ final class AiLabelOverviewController
         $languageService = $this->getLanguageService();
         $view->setTitle($languageService->sL('LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:mlang_tabs_tab'));
 
-        $shortcutButton = GeneralUtility::makeInstance(ShortcutButton::class)
-            ->setRouteIdentifier(self::MODULE_IDENTIFIER)
-            ->setDisplayName($languageService->sL('LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:mlang_tabs_tab'));
-        $view->getDocHeaderComponent()->getButtonBar()->addButton($shortcutButton, ButtonBar::BUTTON_POSITION_RIGHT);
+        // "id" - the page selected in the navigation component
+        $pageId = (int)($request->getQueryParams()['id'] ?? $request->getParsedBody()['id'] ?? 0);
+        $pageIds = $this->pageTreeScopeResolver->resolve($pageId, $this->getBackendUser());
+
+        $view->getDocHeaderComponent()->getButtonBar()->addButton($this->buildShortcutButton($pageId), ButtonBar::BUTTON_POSITION_RIGHT);
 
         $demand = AiLabelDemand::fromRequest($request);
-        $allRecords = $this->recordFinder->findFlaggedRecords();
+        $allRecords = $this->recordFinder->findFlaggedRecords($pageIds);
         $statistics = $this->recordFinder->calculateStatistics($allRecords);
         $tables = $this->recordFinder->getDistinctTables($allRecords);
 
@@ -62,7 +67,7 @@ final class AiLabelOverviewController
         $totalCount = count($matchingRecords);
         $pageItems = array_slice($matchingRecords, ($demand->getPage() - 1) * $demand->getLimit(), $demand->getLimit());
 
-        $returnUrl = $this->buildOverviewUrl($demand);
+        $returnUrl = $this->buildOverviewUrl($demand, $pageId);
         $pageItems = array_map(
             fn (array $record): array => [
                 ...$record,
@@ -76,16 +81,18 @@ final class AiLabelOverviewController
 
         $paginator = new DemandedArrayPaginator($pageItems, $demand->getPage(), $demand->getLimit(), $totalCount);
         $pagination = new SimplePagination($paginator);
-        $paginationBaseUrl = (string)$this->uriBuilder->buildUriFromRoute(self::MODULE_IDENTIFIER, $this->demandToRouteParams($demand));
+        $paginationBaseUrl = (string)$this->uriBuilder->buildUriFromRoute(self::MODULE_IDENTIFIER, $this->defaultRouteParams($demand, $pageId));
 
         $view->assignMultiple([
             'demand' => $demand,
+            // The page currently selected in the tree
+            'pageId' => $pageId,
             // Filters are submitted via POST (Overview/Filters.html), so they never
             // show up in the request's own URI. It must be rebuilt from the parsed
             // demand instead, the same way $paginationBaseUrl is.
             'returnUrl' => $returnUrl,
             'paginationBaseUrl' => $paginationBaseUrl,
-            'sortUrls' => $this->sortUrlBuilder->build($demand, self::MODULE_IDENTIFIER),
+            'sortUrls' => $this->sortUrlBuilder->build($demand, self::MODULE_IDENTIFIER, $pageId),
             'paginator' => $paginator,
             'pagination' => $pagination,
             'statistics' => $statistics,
@@ -96,11 +103,12 @@ final class AiLabelOverviewController
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, string|int>
      */
-    private function demandToRouteParams(AiLabelDemand $demand): array
+    private function defaultRouteParams(AiLabelDemand $demand, int $pageId): array
     {
         $params = [
+            'id' => $pageId,
             'orderField' => $demand->getOrderField(),
             'orderDirection' => $demand->getOrderDirection(),
         ];
@@ -110,12 +118,31 @@ final class AiLabelOverviewController
         return $params;
     }
 
-    private function buildOverviewUrl(AiLabelDemand $demand): string
+    private function buildOverviewUrl(AiLabelDemand $demand, int $pageId): string
     {
         return (string)$this->uriBuilder->buildUriFromRoute(
             self::MODULE_IDENTIFIER,
-            array_merge($this->demandToRouteParams($demand), ['page' => $demand->getPage()]),
+            array_merge($this->defaultRouteParams($demand, $pageId), ['page' => $demand->getPage()]),
         );
+    }
+
+    private function buildShortcutButton(int $pageId): ShortcutButton
+    {
+        $moduleTitle = $this->getLanguageService()->sL('LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:mlang_tabs_tab');
+        $displayName = $moduleTitle;
+
+        $shortcutButton = GeneralUtility::makeInstance(ShortcutButton::class)
+            ->setRouteIdentifier(self::MODULE_IDENTIFIER);
+
+        if ($pageId > 0) {
+            $shortcutButton->setArguments(['id' => $pageId]);
+            $pageRow = BackendUtility::getRecord('pages', $pageId);
+            if ($pageRow !== null) {
+                $displayName = $moduleTitle . ': ' . BackendUtility::getRecordTitle('pages', $pageRow) . ' [' . $pageId . ']';
+            }
+        }
+
+        return $shortcutButton->setDisplayName($displayName);
     }
 
     private function buildEditUrl(string $table, int $uid, string $returnUrl): string
@@ -129,5 +156,10 @@ final class AiLabelOverviewController
     protected function getLanguageService(): LanguageService
     {
         return $GLOBALS['LANG'];
+    }
+
+    protected function getBackendUser(): BackendUserAuthentication
+    {
+        return $GLOBALS['BE_USER'];
     }
 }
