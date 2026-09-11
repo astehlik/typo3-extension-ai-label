@@ -18,6 +18,7 @@ use B13\AiLabel\Domain\Enum\WatermarkWidth;
 use B13\AiLabel\Domain\Model\WatermarkOverride;
 use B13\AiLabel\Imaging\ProcessedFileInvalidator;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 
 // Folds tx_ailabel_watermark_position / tx_ailabel_watermark_color /
@@ -72,7 +73,16 @@ final class AiWatermarkOverrideHandlerHook
     ): void {
         $key = $table . ':' . $id;
         if (!isset($this->pendingValues[$key])) {
-            return;
+            // In a workspace the pre hook is called with the live uid and this one with
+            // the version's, so the stashed value is mapped back through t3ver_oid.
+            $liveId = (int)(BackendUtility::getRecord($table, (int)$id, 't3ver_oid')['t3ver_oid'] ?? 0);
+            if ($liveId === 0) {
+                return;
+            }
+            $key = $table . ':' . $liveId;
+            if (!isset($this->pendingValues[$key])) {
+                return;
+            }
         }
         $override = $this->pendingValues[$key];
         unset($this->pendingValues[$key]);
