@@ -9,6 +9,12 @@ services:
     exclude:
       - '../Classes/Domain/Model/*'
       - '../Classes/Domain/Enum/*'
+      # Implements B13\Aim\Middleware\AiMiddlewareInterface - excluded from
+      # the normal resource scan so Symfony's container compilation never
+      # reflects (and therefore never needs to autoload/resolve that
+      # interface for) this class when b13/aim isn't installed. Registered
+      # manually, conditionally, in Configuration/Services.php instead.
+      - '../Classes/Middleware/FlagAiContentMiddleware.php'
 
   B13\AiLabel\DataProcessing\AiLabelProcessor:
     tags:
@@ -24,6 +30,10 @@ services:
   B13\AiLabel\EventListener\AddAiMetaFieldsToTca:
     tags:
       - { name: 'event.listener', identifier: 'ai-label/add-ai-meta-fields-to-tca' }
+
+  B13\AiLabel\EventListener\AddWatermarkFieldsToTca:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/add-watermark-fields-to-tca', after: 'ai-label/add-ai-meta-fields-to-tca' }
 
   B13\AiLabel\EventListener\AddAiMetadataToRecordListQuery:
     tags:
