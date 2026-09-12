@@ -189,6 +189,29 @@ final class RegisterMyTableForAiLabel
 (`removeApplicableTable()` is available too, if you need to opt a default
 table back out.)
 
+### Extending the overview module's record list
+
+`AiMetadataRecordFinder` (used by the overview module and by the flagged-content
+badges in the Page/Layout module) dispatches
+`B13\AiLabel\Event\AfterRecordIsBuiltEvent` once per flagged record it builds -
+listen to it to add or change keys on that record:
+
+```php
+#[AsEventListener]
+final class AddCustomColumnToAiLabelOverview
+{
+    public function __invoke(AfterRecordIsBuiltEvent $event): void
+    {
+        $table = $event->getRecord()['table'];
+        $event->setRecordProperty('myCustomColumn', $this->resolveSomething($table, $event->getRow()));
+    }
+}
+```
+
+`getRow()` gives you the raw DB row the record was built from, in case you need
+more than what's already in `getRecord()` (which table it's from is in
+`getRecord()['table']`).
+
 ## Frontend integration
 
 This extension renders a small AI-origin marker on every content element
@@ -294,14 +317,21 @@ cached like any other processed image. Things to know:
   operator, so sites on GraphicsMagick silently keep the content element marker.
 - **SVGs are skipped** (they are never rasterised) as are images narrower than
   160px, where the badge would be unreadable anyway.
-- The badge sits bottom right at a constant 160px wide and is never enlarged
-  beyond that, so it stays a discreet mark rather than growing with the image.
-  Only on images too small to carry it does it shrink, to at most a quarter of
-  the image width.
+- The badge is a constant 160px wide and is never enlarged beyond that, so it
+  stays a discreet mark rather than growing with the image. Only on images too
+  small to carry it does it shrink, to at most a quarter of the image width.
+- **Position and color are configurable.** Two extension configuration settings,
+  `watermarkPosition` (`top-left`/`top-right`/`bottom-left`/`bottom-right`,
+  default `bottom-right`) and `watermarkColor` (`black`/`white`, default
+  `black`), set the site-wide default - both match the previous, fixed
+  behaviour unless changed. A flagged file's own `sys_file_metadata` edit form
+  gets a "Watermark position"/"Watermark color" override (visible only in
+  `baked` mode) to set a different corner/color for that one file; leaving
+  either at "Inherit global setting" uses the site-wide default.
 - Only *processed* images are marked. If a template links an original file
   directly, without any processing instruction, it is served unmarked.
-- Changing a file's AI flag flushes that file's processed variants, so the
-  change takes effect on the next render.
+- Changing a file's AI flag, or its per-file watermark override, flushes that
+  file's processed variants, so the change takes effect on the next render.
 
 > **Clear the processed files once, after switching this on.** FAL caches
 > processed images on the original file, the task and its configuration - none of

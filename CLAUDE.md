@@ -191,6 +191,29 @@ name must omit the angle brackets (`f:media`, not `<f:media>`) - see
 awk '/<f:comment>/{c=1} c && /<[a-zA-Z]+:[a-zA-Z]/{print FILENAME":"FNR": "$0} /<\/f:comment>/{c=0}' $(find Resources Tests -iname "*.html")
 ```
 
+**`TcaSchema` title lookups are raw `$GLOBALS['TCA']` reads here too.**
+`AiMetadataRecordFinder::resolveRecordTypeTitle()` mirrors what v13+'s
+`TcaSchemaBuilder` does for a sub-schema (`types[<type>]` merged over `ctrl`, so a
+type-level `title` wins over `ctrl.title`; no `ctrl.type` means the first `types`
+entry is merged) - keep it in sync with that builder if upstream's schema-based
+version changes. `IconSize::SMALL` in the same class goes through
+`getSmallIconSize()` (`'small'` literal on v12, same reasoning as
+`AiMetadataBadgeFactory::createButtonHtml()`).
+
+**Backend module templates, v12 pitfalls found on the 1.2.0 merge:**
+- `data-on-change="submit"` (upstream's select auto-submit in
+  `Overview/Filters.html`) is handled by nothing - not on v12, and not on v14
+  either (grep'd `EXT:backend`'s JS on both). Use core's
+  `data-global-event="change" data-action-submit="$form"` instead -
+  `global-event-handler.js` is loaded by `ModuleTemplate` on all three majors and
+  also handles `Pagination.html`'s `data-action-navigate="$form=~s/$value/"`.
+- Core's `locallang_core.xlf:labels.sorting.asc`/`.desc` don't exist on v12 -
+  `SortableHeader.html` uses our own `locallang_mod.xlf:sorting.asc`/`.desc`.
+  Check a core label exists in the *v12* vendor before referencing it.
+- `f:be.infobox`'s `state` is typed `int` on v12/v13, so
+  `{severityInfo.value}` (the enum case's int, via `f:constant`) is the
+  cross-version form - `f:constant` on an enum case works on v12's Fluid 2.15.
+
 ## Backend UI
 
 - The overview module (`Configuration/Backend/Modules.php`) sets
@@ -344,6 +367,11 @@ original `string|AiMetadata`/`return ''` signature, just a more honest type).
 
 ## Optional dependencies
 
+`b13/aim` (`FlagAiContentMiddleware`, registered conditionally in
+`Configuration/Services.php`) supports `^12.4` itself (0.5.0 requires
+`typo3/cms-core ^12.4 || ^13.4 || ^14.0`), so the `require-dev` entry and
+`FlagAiContentMiddlewareTest` work unchanged on v12.
+
 `typo3/cms-filelist` is `require-dev` only - `MarkFlaggedFilesInFileList` only
 references `ProcessFileListActionsEvent` as a method-parameter type hint, which PHP
 resolves lazily (only when actually invoked). If filelist isn't installed, the class
@@ -471,6 +499,22 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   permission checks in `StorageRepository`) - a request alone isn't enough, unlike
   `new FileReference([...])` used elsewhere (see `FileMetadataViewHelperTest`), which
   never touches `StorageRepository`.
+- **Every test that drives DataHandler (directly or via `AiLabelApi`) needs
+  `$GLOBALS['LANG']`** on v12 - v12's DataHandler resolves record titles through
+  `BackendUtility::getLanguageService()`, which throws a `TypeError` on the `null`
+  global (v13/v14's DataHandler never takes that path, so their tests pass without
+  it and won't tell you). Set it in `setUp()` right after `setUpBackendUser()`, see
+  `AiLabelApiTest`/`AiWatermarkOverrideHandlerHookTest`/`FlagAiContentMiddlewareTest`.
+- **`AiWatermarkTest` pins `GFX/processor_colorspace = 'sRGB'`** - v12 still defaults
+  it to `'RGB'`, which ImageMagick 7 (DDEV, GitHub runners) renders visibly darker
+  than the source, so the brightness comparisons against the untouched picture
+  misjudge the badge's effect (v13+ default to sRGB). Read at `GraphicalFunctions`
+  construction, so `setUp()` is early enough, like `processor_path`.
+- **Local DDEV runs on MariaDB, CI on MySQL** - the `assertCSVDataSet()` JSON
+  fixtures are written in MySQL's normalized form (`{"a": 1, "b": 2}`, keys sorted),
+  MariaDB stores the raw string, so those ~14 assertions always fail locally on
+  whitespace/key order alone. Check they're semantically equal (decode both sides)
+  rather than "fixing" the fixtures.
 
 ## Coding conventions
 

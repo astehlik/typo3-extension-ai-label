@@ -1,6 +1,18 @@
 parameters:
 	ignoreErrors:
 		-
+			message: '#^Access to constant SMALL on an unknown class TYPO3\\CMS\\Core\\Imaging\\IconSize\.$#'
+			identifier: class.notFound
+			count: 1
+			path: ../Classes/Domain/Repository/AiMetadataRecordFinder.php
+
+		-
+			message: '#^Method B13\\AiLabel\\Domain\\Repository\\AiMetadataRecordFinder\:\:getSmallIconSize\(\) has invalid return type TYPO3\\CMS\\Core\\Imaging\\IconSize\.$#'
+			identifier: class.notFound
+			count: 1
+			path: ../Classes/Domain/Repository/AiMetadataRecordFinder.php
+
+		-
 			message: '#^Strict comparison using \=\=\= between array\|null and false will always evaluate to false\.$#'
 			identifier: identical.alwaysFalse
 			count: 1
@@ -63,7 +75,7 @@ parameters:
 		-
 			message: '#^Call to function is_string\(\) with string will always evaluate to true\.$#'
 			identifier: function.alreadyNarrowedType
-			count: 1
+			count: 2
 			path: ../Classes/Imaging/AiWatermark.php
 
 		-
