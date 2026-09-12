@@ -52,6 +52,7 @@ final class AddAiMetaFieldsToTca
             // provider that normally resolves 'items') only runs for type=select, so it
             // never touches this field.
             $tca[$tableName]['columns']['tx_ailabel_origin'] = [
+                'exclude' => true,
                 'label' => 'LLL:EXT:ai_label/Resources/Private/Language/locallang_db.xlf:field.ai_origin',
                 'description' => 'LLL:EXT:ai_label/Resources/Private/Language/locallang_db.xlf:field.ai_origin.description',
                 'onChange' => 'reload',
@@ -67,6 +68,7 @@ final class AddAiMetaFieldsToTca
             ];
             // Only relevant while the record is flagged as AI-created/-modified
             $tca[$tableName]['columns']['tx_ailabel_reviewed'] = [
+                'exclude' => true,
                 'label' => 'LLL:EXT:ai_label/Resources/Private/Language/locallang_db.xlf:field.reviewed',
                 'description' => 'LLL:EXT:ai_label/Resources/Private/Language/locallang_db.xlf:field.reviewed.description',
                 'config' => [
@@ -83,6 +85,7 @@ final class AddAiMetaFieldsToTca
                 'description' => 'LLL:EXT:ai_label/Resources/Private/Language/locallang_db.xlf:palette.aiMetadata.description',
             ];
             $tca[$tableName]['columns']['tx_ailabel_metadata'] = [
+                'exclude' => true,
                 'label' => 'tx_ailabel_metadata',
                 'config' => [
                     'type' => 'json',
