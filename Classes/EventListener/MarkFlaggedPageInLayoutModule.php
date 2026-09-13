@@ -12,6 +12,7 @@ namespace B13\AiLabel\EventListener;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
@@ -42,6 +43,7 @@ final class MarkFlaggedPageInLayoutModule
     public function __construct(
         private readonly AiMetadataBadgeFactory $badgeFactory,
         private readonly AiMetadataRecordFinder $recordFinder,
+        private readonly ApplicableTablesProvider $applicableTablesProvider,
         private readonly PageRenderer $pageRenderer,
         private readonly UriBuilder $uriBuilder,
     ) {
@@ -61,7 +63,9 @@ final class MarkFlaggedPageInLayoutModule
         $returnUrl = (string)$request->getUri();
         $headerContent = '';
 
-        $row = BackendUtility::getRecord('pages', $pageId, 'tx_ailabel_metadata');
+        $row = $this->applicableTablesProvider->isTableApplicable('pages')
+            ? BackendUtility::getRecord('pages', $pageId, 'tx_ailabel_metadata')
+            : null;
         $pageMetadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
         if ($pageMetadata->isFlagged()) {
             $href = $this->buildEditUrl('pages', $pageId, $returnUrl);
