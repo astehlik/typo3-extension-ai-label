@@ -60,7 +60,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "B13\\AiLabel\\Tests\\": "Tests"
+            "B13\\AiLabel\\Tests\\": "Tests",
+            "B13\\AiLabelNoPages\\": "Tests/Functional/EventListener/Fixtures/Extensions/ai_label_no_pages/Classes/"
         }
     },
     "autoload": {
