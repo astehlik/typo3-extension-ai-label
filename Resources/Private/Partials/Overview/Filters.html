@@ -1,6 +1,6 @@
 <html xmlns:f="http://typo3.org/ns/TYPO3/CMS/Fluid/ViewHelpers" data-namespace-typo3-fluid="true">
 
-<form action="{f:be.uri(route:'web_ai_label_overview')}" method="post" enctype="multipart/form-data" name="demand">
+<form action="{f:be.uri(route:'web_ai_label_overview', parameters: '{id: pageId}')}" method="post" enctype="multipart/form-data" name="demand">
     <input type="hidden" name="orderField" value="{demand.orderField}">
     <input type="hidden" name="orderDirection" value="{demand.orderDirection}">
     <div class="form-row">
@@ -42,7 +42,7 @@
         </div>
         <div class="form-group align-self-end">
             <input type="submit" value="{f:translate(key: 'LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:filter.submit')}" class="btn btn-default" />
-            <a href="{f:be.uri(route:'web_ai_label_overview')}" class="btn btn-link"><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:filter.reset" /></a>
+            <a href="{f:be.uri(route:'web_ai_label_overview', parameters: '{id: pageId}')}" class="btn btn-link"><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:filter.reset" /></a>
         </div>
     </div>
 </form>

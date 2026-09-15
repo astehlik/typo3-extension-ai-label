@@ -146,6 +146,13 @@ nothing version-specific remained (e.g. `MarkFlaggedPageInLayoutModule` - `getBa
 doesn't touch `ComponentFactory`, and `ModifyPageLayoutContentEvent` is identical on both
 versions). Always check first whether the split is still needed before adding one.
 
+Not every split needs its own class: `AiLabelOverviewController::addShortcut()` keeps
+both paths inline behind a `Typo3Version` guard, because only one *method call* differs -
+v14 wants `DocHeaderComponent::setShortcutContext()`, and handing a `ShortcutButton` to
+the button bar by hand is deprecated there and gone in v15; v13 has no such method and
+keeps `addButton()`. `Build/phpstan13-baseline.neon` carries the resulting
+`method.notFound`. Same for `AiLabelAccessChecker`.
+
 Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`,
 lazily via `GeneralUtility::makeInstance()` since it can't be constructor-injected - this
 class is instantiated on both versions; v13 `createButtonHtml()` builds raw HTML),
@@ -159,10 +166,49 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
 
 ## Backend UI
 
-- The overview module (`Configuration/Backend/Modules.php`) sets
-  `'inheritNavigationComponentFromMainModule' => false` - it's not page-tree-scoped
-  (lists flagged records across the whole site), so it shouldn't show the Web module's
-  page tree in the navigation component.
+- The overview module shows the Web module's page tree (explicit user request,
+  2026-09-11, reversing the original design). `Configuration/Backend/Modules.php`
+  therefore carries **no** `inheritNavigationComponentFromMainModule` key at all -
+  inheriting from the parent module is core's own default
+  (`BaseModule::$inheritNavigationComponent = true`); it was the removed `=> false`
+  that used to suppress the tree. Selecting a page scopes the listing to that page
+  plus its recursive subpages; no selection (or the virtual root, `id=0`) keeps the
+  original site-wide listing.
+  `AiLabelOverviewController::handleRequest()` reads the standard `id` request
+  parameter straight off the request itself (same convention core uses for every
+  page-tree-bound module) - deliberately **not** modeled as a field on `AiLabelDemand`,
+  which stays scoped to filter/sort/paging state only. Every URL the module builds
+  (the pagination base URL, the sort links, the filter form's own `action`, the
+  "reset filters" links) is a link back to this same module route, so baking `id`
+  into each of those `f:be.uri`/`buildUriFromRoute()` calls directly keeps the
+  page-tree selection intact across a request with zero extra state to thread through
+  - no hidden form field, no demand property to keep in sync.
+  `B13\AiLabel\Backend\PageTreeScopeResolver` is the **only** page tree walk in the
+  extension - `resolveSelectedPage()` for the module's tree selection, `resolveSubtrees()`
+  for `AiMetadataRecordFinder`'s web mount scope, both on one
+  `PageTreeRepository::getFlattenedPages()` call with the same workspace (from `Context`,
+  never `$backendUser->workspace`) and the same `PAGE_SHOW` clause. Version-safe,
+  identical on v13.4 and v14. Entry points are deliberately **not** seeded into the
+  result: `getPageRecords()` already returns them itself, permission-filtered, so an id
+  the user may not see can never widen the scope (and never shows up twice either).
+  `resolveSelectedPage()` returns `null` for "no page selected" (id `<= 0`) and `[]` for
+  a page that is gone or unreadable - `findFlaggedRecords()` treats those as site-wide
+  and as "nothing matches" respectively, which is why the two must stay distinct.
+  `findFlaggedRecords(?array $pageIds)` applies the list at the DB level, per table:
+  `uid IN (...)` for the `pages` table itself (its `pid` only ever points at its
+  *parent*, so filtering pages by `pid` would drop the selected page and only ever match
+  its direct children), `pid IN (...)` for everything else. Root-level tables therefore
+  drop out of a page scope entirely - `sys_file_metadata` has `pid = 0`, so selecting any
+  page hides every flagged file. The scope is applied to the single
+  `findFlaggedRecords()` call the statistics/distinct-table options and the filtered
+  listing are all derived from, so selecting a page scopes all of those together,
+  not just the listing rows.
+- Both of the overview module's empty states name the page-tree scope when one is active
+  (`overview.empty.message.inPageTree`/`overview.noEntries.filtered.inPageTree`), plus a
+  "Search all pages" link built from `defaultRouteParams($demand, 0)` - filters kept, `id`
+  dropped. Without that, "Nothing flagged" reads as a statement about the whole site while
+  it only ever describes the selected subtree. `scopeLabel` is the page title, falling back
+  to `[uid]` for a page that is gone or unreadable, since the scope still has to be named.
 - `AiMetadataBadgeFactory::getBadge()` is the single source of truth for label/color
   (`ReviewStatus` value object) - used by the record list/file list dropdowns, the layout
   module badges, the form legend (`VirtualCheckboxElement`), and the overview module.
@@ -412,6 +458,19 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   `typo3/cms-workspaces` needs to be present in `require-dev`.
 - `coreExtensionsToLoad` also needs `'filelist'` for any test that boots the full
   extension (composer-required at dev-time even though not at runtime - see above).
+- Testing the overview module end to end (`AiLabelOverviewControllerTest`): call
+  `handleRequest()` on the controller from the container with a `ServerRequest` carrying
+  `applicationType`, `normalizedParams` and a `route` attribute. That route needs
+  `['packageName' => 'b13/ai-label']` as its options - `BackendViewFactory` builds the
+  template search paths from it alone, so without it Fluid only ever looks inside
+  `EXT:backend` and every render dies with `InvalidTemplateResourceException`. Assertions
+  run against the rendered body, so expected label text is HTML-escaped (`&quot;`,
+  `&amp;` inside hrefs). **One render per test**: `ModuleTemplate` pulls
+  `DocHeaderComponent` from the container, so a second `handleRequest()` in the same
+  process still finds the first one's `ShortcutButton` in the button bar and trips
+  core's "manually adding ShortcutButton" deprecation, which `failOnDeprecation="true"`
+  turns into a failure. Production renders a module once per request, so this is a test
+  artifact only.
 - Testing DataProcessors: just instantiate directly and call `->process($cObj, ...)` -
   no Fluid needed, see `AiLabelProcessorTest`.
 - Testing ViewHelpers: needs an actual Fluid render pass to be meaningful (namespace
