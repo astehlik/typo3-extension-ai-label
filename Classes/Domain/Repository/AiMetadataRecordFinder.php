@@ -18,18 +18,23 @@ use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
 use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use TYPO3\CMS\Backend\History\RecordHistory;
+use TYPO3\CMS\Backend\Tree\Repository\PageTreeRepository;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\QueryBuilder;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Localization\LanguageService;
+use TYPO3\CMS\Core\Schema\Capability\RootLevelCapability;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\TcaSchema;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Versioning\VersionState;
 
@@ -52,6 +57,11 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 // an 'editable' flag callers use to decide whether to link it for editing.
 final class AiMetadataRecordFinder
 {
+    private const PAGE_TREE_DEPTH = 99;
+
+    /** @var list<int>|null Resolved once, the finder walks every applicable table. */
+    private ?array $accessiblePageIds = null;
+
     public function __construct(
         private readonly ConnectionPool $connectionPool,
         private readonly ApplicableTablesProvider $applicableTablesProvider,
@@ -97,7 +107,7 @@ final class AiMetadataRecordFinder
         $isVersionable = $this->tcaSchemaFactory->has($table)
             && $this->tcaSchemaFactory->get($table)->hasCapability(TcaSchemaCapability::Workspace);
 
-        $records = [];
+        $rows = [];
 
         foreach ($this->findLiveRows($table, $pid, $isVersionable) as $row) {
             if ($isVersionable && $workspaceId > 0) {
@@ -112,18 +122,23 @@ final class AiMetadataRecordFinder
                 }
             }
 
-            $record = $this->buildRecord($table, $row);
-            if ($record !== null) {
-                $records[] = $record;
-            }
+            $rows[] = $row;
         }
 
         if ($isVersionable && $workspaceId > 0) {
             foreach ($this->findNewInWorkspace($table, $pid, $workspaceId) as $row) {
-                $record = $this->buildRecord($table, $row);
-                if ($record !== null) {
-                    $records[] = $record;
-                }
+                $rows[] = $row;
+            }
+        }
+
+        // One query for the whole table instead of two per record.
+        $authors = $this->resolveAuthors($table, $rows);
+
+        $records = [];
+        foreach ($rows as $row) {
+            $record = $this->buildRecord($table, $row, $authors[(int)$row['uid']] ?? '');
+            if ($record !== null) {
+                $records[] = $record;
             }
         }
 
@@ -139,6 +154,10 @@ final class AiMetadataRecordFinder
             ->select('*')
             ->from($table)
             ->where($queryBuilder->expr()->isNotNull('tx_ailabel_metadata'));
+
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
+        }
 
         if ($pid !== null) {
             $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
@@ -175,7 +194,119 @@ final class AiMetadataRecordFinder
             $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
         }
 
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
+        }
+
         return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * Restricts the query to what this user may see, and says whether anything is
+     * visible at all.
+     */
+    private function applyPermissionConstraints(QueryBuilder $queryBuilder, string $table): bool
+    {
+        $backendUser = $this->getBackendUser();
+        if ($backendUser === null) {
+            return false;
+        }
+        if ($backendUser->isAdmin()) {
+            return true;
+        }
+        if (!$backendUser->check('tables_select', $table)) {
+            return false;
+        }
+
+        if ($this->livesOnRootLevelOnly($table)) {
+            // pid is always 0 here, so there is nothing to scope in SQL. File metadata is
+            // checked per row by AiLabelAccessChecker (file mounts and file permissions);
+            // any other root-level table has no boundary here and stays admin-only.
+            return $table === 'sys_file_metadata';
+        }
+
+        $accessiblePageIds = $this->resolveAccessiblePageIds($backendUser);
+        if ($accessiblePageIds === []) {
+            return false;
+        }
+
+        $pageIdParameter = $queryBuilder->createNamedParameter($accessiblePageIds, Connection::PARAM_INT_ARRAY);
+        if ($table !== 'pages') {
+            $queryBuilder->andWhere($queryBuilder->expr()->in('pid', $pageIdParameter));
+
+            return true;
+        }
+
+        // Pages carry access on the record itself. A translation is its own row with its
+        // own uid, and the accessible ids only ever contain default language pages, so it
+        // has to be matched through its parent as well.
+        $pageConstraints = [$queryBuilder->expr()->in('uid', $pageIdParameter)];
+        $schema = $this->tcaSchemaFactory->get($table);
+        if ($schema->hasCapability(TcaSchemaCapability::Language)) {
+            $pageConstraints[] = $queryBuilder->expr()->in(
+                $schema->getCapability(TcaSchemaCapability::Language)->getTranslationOriginPointerField()->getName(),
+                $pageIdParameter
+            );
+        }
+        $queryBuilder->andWhere($queryBuilder->expr()->or(...$pageConstraints));
+
+        return true;
+    }
+
+    /**
+     * Pages reachable from the user's web mounts, or null for an admin. The permission
+     * clause alone is not the same thing: bits can pass on pages outside every mount.
+     *
+     * @return list<int>|null
+     */
+    private function resolveAccessiblePageIds(BackendUserAuthentication $backendUser): ?array
+    {
+        if ($backendUser->isAdmin()) {
+            return null;
+        }
+        if ($this->accessiblePageIds !== null) {
+            return $this->accessiblePageIds;
+        }
+
+        $webMounts = $backendUser->getWebmounts();
+        if ($webMounts === []) {
+            return $this->accessiblePageIds = [];
+        }
+
+        // Without the workspace the repository's own WorkspaceRestriction drops pages that
+        // exist only in this workspace, and with them every record on such a page.
+        $pageTreeRepository = GeneralUtility::makeInstance(
+            PageTreeRepository::class,
+            (int)$this->context->getPropertyFromAspect('workspace', 'id')
+        );
+        $pageTreeRepository->setAdditionalWhereClause($backendUser->getPagePermsClause(Permission::PAGE_SHOW));
+
+        // The mounts themselves are accessible, the walk adds what is below them.
+        $pageIds = $webMounts;
+        foreach ($pageTreeRepository->getFlattenedPages($webMounts, self::PAGE_TREE_DEPTH) as $page) {
+            $pageIds[] = (int)$page['uid'];
+        }
+
+        return $this->accessiblePageIds = array_values(array_unique($pageIds));
+    }
+
+    private function livesOnRootLevelOnly(string $table): bool
+    {
+        if (!$this->tcaSchemaFactory->has($table)) {
+            return false;
+        }
+        $schema = $this->tcaSchemaFactory->get($table);
+        if (!$schema->hasCapability(TcaSchemaCapability::RestrictionRootLevel)) {
+            return false;
+        }
+        $capability = $schema->getCapability(TcaSchemaCapability::RestrictionRootLevel);
+
+        return $capability->getRootLevelType() === RootLevelCapability::TYPE_ONLY_ON_ROOTLEVEL;
+    }
+
+    private function getBackendUser(): ?BackendUserAuthentication
+    {
+        return $GLOBALS['BE_USER'] ?? null;
     }
 
     /**
@@ -297,7 +428,7 @@ final class AiMetadataRecordFinder
     }
 
     /** @param array<string, mixed> $row */
-    private function buildRecord(string $table, array $row): ?array
+    private function buildRecord(string $table, array $row, string $author): ?array
     {
         $metadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
         if (!$metadata->isFlagged()) {
@@ -313,7 +444,7 @@ final class AiMetadataRecordFinder
             'pid' => (int)$row['pid'],
             'title' => BackendUtility::getRecordTitle($table, $row),
             'metadata' => $metadata,
-            'author' => $this->resolveAuthor($table, $row),
+            'author' => $author,
             // Resolves per-row overlays (hidden, workspace state, ...), same as
             // any other backend record listing. Built here rather than in the
             // Fluid template since IconFactory needs the actual DB row, which
@@ -337,18 +468,73 @@ final class AiMetadataRecordFinder
         return $event->getRecord();
     }
 
-    /** @param array<string, mixed> $row */
-    private function resolveAuthor(string $table, array $row): string
+    /**
+     * Creating user per record uid, from the record's insert history entry as
+     * RecordHistory::getCreationInformationForRecord() reads it, once per table.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<int, string>
+     */
+    private function resolveAuthors(string $table, array $rows): array
     {
-        $recordHistory = GeneralUtility::makeInstance(RecordHistory::class);
-        $ownerInformation = $recordHistory->getCreationInformationForRecord($table, $row);
-        $ownerUid = (int)(is_array($ownerInformation) && ($ownerInformation['usertype'] ?? '') === 'BE' ? $ownerInformation['userid'] : 0);
-        if ($ownerUid <= 0) {
-            return '';
+        $recordUids = array_map(static fn (array $row): int => (int)$row['uid'], $rows);
+        if ($recordUids === []) {
+            return [];
         }
 
-        $creatorRecord = BackendUtility::getRecord('be_users', $ownerUid);
-        return ($creatorRecord['realName'] ?? '') ?: ($creatorRecord['username'] ?? '') ?: '';
+        $creatorUidPerRecord = [];
+        $queryBuilder = $this->connectionPool->getQueryBuilderForTable('sys_history');
+        $queryBuilder->getRestrictions()->removeAll();
+        // Chunked to stay under the placeholder limit.
+        foreach (array_chunk($recordUids, 1000) as $recordUidChunk) {
+            $historyEntries = $queryBuilder
+                ->select('recuid', 'userid', 'usertype')
+                ->from('sys_history')
+                ->where(
+                    $queryBuilder->expr()->eq('tablename', $queryBuilder->createNamedParameter($table)),
+                    $queryBuilder->expr()->in('recuid', $queryBuilder->createNamedParameter($recordUidChunk, Connection::PARAM_INT_ARRAY)),
+                    $queryBuilder->expr()->eq('actiontype', $queryBuilder->createNamedParameter(RecordHistoryStore::ACTION_ADD, Connection::PARAM_INT))
+                )
+                ->orderBy('uid')
+                ->executeQuery()
+                ->fetchAllAssociative();
+
+            foreach ($historyEntries as $historyEntry) {
+                $recordUid = (int)$historyEntry['recuid'];
+                // The first insert entry wins, matching getCreationInformationForRecord()'s
+                // own setMaxResults(1).
+                if (isset($creatorUidPerRecord[$recordUid]) || ($historyEntry['usertype'] ?? '') !== 'BE') {
+                    continue;
+                }
+                $creatorUidPerRecord[$recordUid] = (int)$historyEntry['userid'];
+            }
+        }
+
+        $creatorUids = array_values(array_unique(array_filter($creatorUidPerRecord)));
+        if ($creatorUids === []) {
+            return [];
+        }
+
+        $usersQueryBuilder = $this->connectionPool->getQueryBuilderForTable('be_users');
+        $usersQueryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $users = $usersQueryBuilder
+            ->select('uid', 'username', 'realName')
+            ->from('be_users')
+            ->where($usersQueryBuilder->expr()->in('uid', $usersQueryBuilder->createNamedParameter($creatorUids, Connection::PARAM_INT_ARRAY)))
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $namePerUser = [];
+        foreach ($users as $user) {
+            $namePerUser[(int)$user['uid']] = ((string)($user['realName'] ?? '')) ?: ((string)($user['username'] ?? ''));
+        }
+
+        $authors = [];
+        foreach ($creatorUidPerRecord as $recordUid => $creatorUid) {
+            $authors[$recordUid] = $namePerUser[$creatorUid] ?? '';
+        }
+
+        return $authors;
     }
 
     /**

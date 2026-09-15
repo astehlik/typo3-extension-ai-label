@@ -23,15 +23,27 @@ final class ApplicableTablesProvider
         'sys_file_metadata',
     ];
 
+    /** @var list<string>|null */
+    private ?array $applicableTables = null;
+
     public function __construct(private readonly EventDispatcherInterface $eventDispatcher)
     {
     }
 
+    /**
+     * Resolved once per request: the DataHandler hook asks per record per table, and
+     * dispatching the event every time made that a hot path on imports.
+     */
     public function getApplicableTables(): array
     {
+        if ($this->applicableTables !== null) {
+            return $this->applicableTables;
+        }
+
         $applicableTablesEvent = new ApplicableTablesEvent(self::DEFAULT_TABLES);
         $this->eventDispatcher->dispatch($applicableTablesEvent);
-        return $applicableTablesEvent->getApplicableTables();
+
+        return $this->applicableTables = $applicableTablesEvent->getApplicableTables();
     }
 
     public function isTableApplicable(string $table): bool

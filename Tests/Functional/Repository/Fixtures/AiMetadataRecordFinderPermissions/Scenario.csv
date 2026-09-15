@@ -1,0 +1,11 @@
+pages
+,uid,pid,doktype,title,perms_userid,perms_groupid,perms_user,perms_group,perms_everybody
+,1,0,1,"Editor's page",1,1,31,31,1
+,2,0,1,"Board page",1,0,31,0,0
+,3,0,1,"Readable but unmounted",1,1,31,31,1
+,4,1,1,"Child of the mount",1,1,31,31,1
+tt_content
+,uid,pid,header,CType,tx_ailabel_metadata
+,1,1,"On the editor's page",text,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"
+,2,2,"Board memo: layoffs Q4",text,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"
+,3,3,"On a page outside the mount",text,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"

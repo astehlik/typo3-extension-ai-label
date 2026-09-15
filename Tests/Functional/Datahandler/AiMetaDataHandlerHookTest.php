@@ -17,6 +17,7 @@ use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Database\Connection;
+use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -34,6 +35,7 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
     protected array $coreExtensionsToLoad = [
         'filelist',
         'fluid_styled_content',
+        'workspaces',
     ];
 
     protected array $testExtensionsToLoad = [
@@ -60,6 +62,160 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
         );
         $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($GLOBALS['BE_USER']);
         $this->dataHandler = GeneralUtility::makeInstance(DataHandler::class);
+    }
+
+    // Saves carrying no ai fields used to skip the review reset entirely.
+    #[Test]
+    public function contentChangeWithoutAnyAiFieldsStillResetsTheReview(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndReviewedRecord.csv');
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'header' => 'Changed by an importer',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/ContentChangeOnReviewedRecordResetsReviewResult.csv');
+    }
+
+    // A save that moves neither flag nor review must not touch the column.
+    #[Test]
+    public function contentChangeWithoutAnyAiFieldsLeavesAnUnreviewedRecordAlone(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndUnreviewedRecord.csv');
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'header' => 'Changed by an importer',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/ContentChangeOnAlreadyPendingRecordStaysPendingResult.csv');
+    }
+
+    #[Test]
+    public function contentChangeWithoutAnyAiFieldsLeavesUnflaggedRecordsUntouched(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/UnflaggedRecord.csv');
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'header' => 'An ordinary edit',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/UpdatingUnflaggedRecordStaysNullResult.csv');
+    }
+
+    // A checkbox that merely stayed ticked is not a reviewing decision, so the review
+    // must keep the user who gave it rather than the user who happened to save.
+    #[Test]
+    public function savingAReviewedRecordKeepsTheOriginalReviewer(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedReviewedByAnotherUser.csv');
+
+        $this->dataHandler->start(['tt_content' => [1 => [
+            'tx_ailabel_origin' => 1,
+            'tx_ailabel_reviewed' => 1,
+        ]]], [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/ReviewKeepsItsAuthorResult.csv');
+    }
+
+    // The reviewer and the timestamp always describe the same review, so unticking
+    // clears both rather than leaving the old date behind.
+    #[Test]
+    public function untickingReviewedClearsTheTimestampAsWell(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedReviewedByAnotherUser.csv');
+
+        $this->dataHandler->start(['tt_content' => [1 => [
+            'tx_ailabel_origin' => 1,
+            'tx_ailabel_reviewed' => 0,
+        ]]], [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/UntickingReviewedClearsBothResult.csv');
+    }
+
+    // Core writes t3ver_stage into $fieldArray before its own compare, so a version
+    // parked at a review stage must not look like an editorial change.
+    #[Test]
+    public function aStageChangeOnAWorkspaceVersionKeepsTheReview(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedReviewedByAnotherUser.csv');
+        $this->backendUser->workspace = 1;
+
+        $this->dataHandler->start(['tt_content' => [1 => ['header' => 'Original']]], [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+        $versionUid = (int)$this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->fetchOne('SELECT uid FROM tt_content WHERE t3ver_oid = 1 AND t3ver_wsid = 1');
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->update('tt_content', ['t3ver_stage' => 10], ['uid' => $versionUid]);
+
+        // Nothing editorial changes here, only the stage core resets on every save.
+        $dataHandler = GeneralUtility::makeInstance(DataHandler::class);
+        $dataHandler->start(['tt_content' => [1 => ['header' => 'Original']]], [], $this->backendUser);
+        $dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/StageChangeKeepsReviewResult.csv');
+    }
+
+    // DataHandler swaps $id to the workspace version between the hook's two methods.
+    #[Test]
+    public function contentChangeInsideAWorkspaceResetsReviewOnTheVersion(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndReviewedRecord.csv');
+        $this->backendUser->workspace = 1;
+
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'header' => 'Changed inside the workspace',
+                    'tx_ailabel_origin' => 1,
+                    'tx_ailabel_reviewed' => 1,
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/ContentChangeInWorkspaceResetsReviewOnVersionResult.csv');
+    }
+
+    #[Test]
+    public function originChangeInsideAWorkspaceLandsOnTheVersion(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/FlaggedAndReviewedRecord.csv');
+        $this->backendUser->workspace = 1;
+
+        // No content change, so the review stays with whoever gave it.
+        $data = [
+            'tt_content' => [
+                1 => [
+                    'tx_ailabel_origin' => 2,
+                    'tx_ailabel_reviewed' => 1,
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/OriginChangeInWorkspaceLandsOnVersionResult.csv');
     }
 
     #[Test]
@@ -242,5 +398,30 @@ class AiMetaDataHandlerHookTest extends FunctionalTestCase
 
         self::assertNotEmpty($historyEntries, 'Expected at least one sys_history entry for tt_content:1');
         self::assertStringContainsString('tx_ailabel_metadata', $historyEntries[0]['history_data']);
+    }
+
+    /**
+     * The update path runs without stashed values by design, which used to make it
+     * read tx_ailabel_metadata on every saved table, including the ones this
+     * extension does not cover and which therefore have no such column. MariaDB
+     * and MySQL report the unknown column, SQLite reads it as a string literal and
+     * hides the failure.
+     */
+    #[Test]
+    public function savingATableTheExtensionDoesNotCoverKeepsWorking(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/NonApplicableTableRecord.csv');
+        $data = [
+            'sys_category' => [
+                1 => [
+                    'title' => 'Renamed without ai fields',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertSame([], $this->dataHandler->errorLog);
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiMetaDataHandlerHook/SavingNonApplicableTableKeepsWorkingResult.csv');
     }
 }

@@ -32,6 +32,7 @@
     "suggest": {
         "typo3/cms-fluid-styled-content": "Automatically renders the AI label on every content element via a DropIn/After/All.html override",
         "typo3/cms-filelist": "Shows AI-label badges for flagged files in the File > Filelist backend module",
+        "typo3/cms-workspaces": "Repairs the AI flag after publishing a workspace version, which would otherwise be written back double-encoded",
         "b13/aim": "Enables FlagAiContentMiddleware, which automatically flags a record as AI-created/AI-modified once an aim request opts in via metadata"
     },
     "minimum-stability": "dev",

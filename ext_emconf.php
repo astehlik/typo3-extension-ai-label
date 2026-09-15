@@ -17,6 +17,7 @@ $EM_CONF[$_EXTKEY] = [
         'suggests' => [
             'fluid_styled_content' => '13.4.0-14.99.99',
             'filelist' => '13.4.0-14.99.99',
+            'workspaces' => '13.4.0-14.99.99',
         ],
     ],
 ];
