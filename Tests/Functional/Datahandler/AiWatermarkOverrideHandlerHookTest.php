@@ -65,6 +65,28 @@ final class AiWatermarkOverrideHandlerHookTest extends FunctionalTestCase
         $this->dataHandler = GeneralUtility::makeInstance(DataHandler::class);
     }
 
+    /**
+     * The post hook runs for every table DataHandler saves, so the workspace mapping
+     * must not reach for t3ver_oid on a table that has no such column.
+     */
+    #[Test]
+    public function savingATableWithoutWorkspaceSupportKeepsWorking(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiWatermarkOverrideHandlerHook/NonWorkspaceAwareTableRecord.csv');
+        $data = [
+            'fe_groups' => [
+                1 => [
+                    'title' => 'Renamed without watermark fields',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertSame([], $this->dataHandler->errorLog);
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiWatermarkOverrideHandlerHook/SavingNonWorkspaceAwareTableKeepsWorkingResult.csv');
+    }
+
     // sys_file_metadata is workspace aware, so DataHandler swaps $id to the version
     // between the hook's two methods, exactly as it does for the ai metadata hook.
     #[Test]
