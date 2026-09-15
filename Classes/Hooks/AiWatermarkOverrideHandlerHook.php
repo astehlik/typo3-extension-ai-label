@@ -71,11 +71,15 @@ final class AiWatermarkOverrideHandlerHook
         array &$fieldArray,
         DataHandler $dataHandler
     ): void {
+        // Called for every table DataHandler saves, and only sys_file_metadata ever
+        // carries a watermark override - anything else has no t3ver_oid to read either.
+        if ($table !== 'sys_file_metadata' || $this->pendingValues === []) {
+            return;
+        }
+
         $key = $table . ':' . $id;
         if (!isset($this->pendingValues[$key])) {
-            // In a workspace the pre hook is called with the live uid and this one with
-            // the version's, so the stashed value is mapped back through t3ver_oid.
-            $liveId = (int)(BackendUtility::getRecord($table, (int)$id, 't3ver_oid')['t3ver_oid'] ?? 0);
+            $liveId = $this->resolveLiveId($table, (int)$id);
             if ($liveId === 0) {
                 return;
             }
@@ -92,8 +96,17 @@ final class AiWatermarkOverrideHandlerHook
         // FAL caches processed files on keys that don't change when only the
         // override does - an update has to flush them, or the stale render stays.
         // New records have no processed variants yet.
-        if ($status === 'update' && $table === 'sys_file_metadata') {
+        if ($status === 'update') {
             $this->processedFileInvalidator->invalidateForFileMetadata((int)$id);
         }
+    }
+
+    /**
+     * In a workspace the pre hook is called with the live uid and the post hook with
+     * the version's, so the stashed value is mapped back through t3ver_oid.
+     */
+    private function resolveLiveId(string $table, int $id): int
+    {
+        return (int)(BackendUtility::getRecord($table, $id, 't3ver_oid')['t3ver_oid'] ?? 0);
     }
 }

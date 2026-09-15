@@ -79,6 +79,19 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
   that it reads `tx_ailabel_metadata` on tables that have no such column, which
   MySQL/MariaDB reject with "Unknown column" while SQLite quietly answers with the
   column name as a string literal.
+  **This applies to `AiWatermarkOverrideHandlerHook` just as much**, and bit us there:
+  its post hook mapped `$id` back to the live record through
+  `BackendUtility::getRecord($table, $id, 't3ver_oid')` before any guard, so saving a
+  record in *any* table without `ctrl.versioningWS` (`fe_users`, `fe_groups`,
+  `sys_file`, ...) died with `InvalidFieldNameException: Unknown column 't3ver_oid'`.
+  It now returns on anything but `sys_file_metadata` before touching a column. Note
+  the guard is the concrete table, **not** `isTableApplicable()` as in the ai metadata
+  hook: `tx_ailabel_metadata` exists on every applicable table, while
+  `AddWatermarkFieldsToTca` only ever puts `tx_ailabel_watermark` on
+  `sys_file_metadata`, so the applicable-tables set would be too wide here. Whenever a
+  hook that fires for every table touches a column, ask which tables actually have it -
+  `versioningWS` is *not* a given (most core tables have it, which is exactly why this
+  stayed hidden).
 - Business rule: as long as a record is flagged, a save that changes real content resets
   `reviewed_by` to 0 - *unless* that same save also actively ticks "reviewed" from
   unreviewed to reviewed ("reviewed wins"). Reviewed merely *staying* ticked (checkbox
