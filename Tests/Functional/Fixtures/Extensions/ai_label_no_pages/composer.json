@@ -1,0 +1,23 @@
+{
+    "name": "b13/ai-label-no-pages",
+    "type": "typo3-cms-extension",
+    "description": "Test fixture: drops pages from the applicable tables.",
+    "license": "GPL-2.0-or-later",
+    "version": "1.2.2",
+    "require": {
+        "b13/ai-label": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "B13\\AiLabelNoPages\\": "Classes/"
+        }
+    },
+    "extra": {
+        "typo3/cms": {
+            "extension-key": "ai_label_no_pages",
+            "Package": {
+                "providesPackages": []
+            }
+        }
+    }
+}

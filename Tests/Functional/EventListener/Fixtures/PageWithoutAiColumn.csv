@@ -1,0 +1,7 @@
+pages
+,uid,pid,doktype,title
+,1,0,1,"A page"
+tt_content
+,uid,pid,header,CType,tx_ailabel_metadata
+,1,1,"Flagged element",text,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"
+,2,1,"Plain element",text,\NULL
