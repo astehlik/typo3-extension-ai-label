@@ -54,7 +54,10 @@ final class AiLabelOverviewController
 
         // "id" - the page selected in the navigation component
         $pageId = (int)($request->getQueryParams()['id'] ?? $request->getParsedBody()['id'] ?? 0);
-        $pageIds = $this->pageTreeScopeResolver->resolve($pageId, $this->getBackendUser());
+        $backendUser = $this->getBackendUser();
+        $pageIds = $backendUser !== null
+            ? $this->pageTreeScopeResolver->resolveSelectedPage($pageId, $backendUser)
+            : [];
 
         $view->getDocHeaderComponent()->getButtonBar()->addButton($this->buildShortcutButton($pageId), ButtonBar::BUTTON_POSITION_RIGHT);
 
@@ -128,9 +131,7 @@ final class AiLabelOverviewController
 
     private function buildShortcutButton(int $pageId): ShortcutButton
     {
-        $moduleTitle = $this->getLanguageService()->sL('LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:mlang_tabs_tab');
-        $displayName = $moduleTitle;
-
+        $displayName = $moduleTitle = $this->getLanguageService()->sL('LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:mlang_tabs_tab');
         $shortcutButton = GeneralUtility::makeInstance(ShortcutButton::class)
             ->setRouteIdentifier(self::MODULE_IDENTIFIER);
 
@@ -158,8 +159,8 @@ final class AiLabelOverviewController
         return $GLOBALS['LANG'];
     }
 
-    protected function getBackendUser(): BackendUserAuthentication
+    protected function getBackendUser(): ?BackendUserAuthentication
     {
-        return $GLOBALS['BE_USER'];
+        return $GLOBALS['BE_USER'] ?? null;
     }
 }

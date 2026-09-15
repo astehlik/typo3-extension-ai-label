@@ -95,7 +95,18 @@ class AiMetadataRecordFinderPageTreeScopeTest extends FunctionalTestCase
     {
         $this->authenticate(2);
 
+        self::assertSame([], $this->resolve(2));
         self::assertSame([], $this->findFlagged($this->resolve(2)));
+    }
+
+    // The entry point is not carried over unchecked, so it cannot widen the scope.
+    #[Test]
+    public function selectingAPageThatDoesNotExistScopesToNothing(): void
+    {
+        $this->authenticate(1);
+
+        self::assertSame([], $this->resolve(9999));
+        self::assertSame([], $this->findFlagged([]));
     }
 
     #[Test]
@@ -131,12 +142,10 @@ class AiMetadataRecordFinderPageTreeScopeTest extends FunctionalTestCase
     /** @return list<int>|null */
     private function resolve(int $pageId): ?array
     {
-        $pageIds = $this->get(PageTreeScopeResolver::class)->resolve($pageId, $GLOBALS['BE_USER']);
-        if ($pageIds === null) {
-            return null;
+        $pageIds = $this->get(PageTreeScopeResolver::class)->resolveSelectedPage($pageId, $GLOBALS['BE_USER']);
+        if ($pageIds !== null) {
+            sort($pageIds);
         }
-        $pageIds = array_values(array_unique($pageIds));
-        sort($pageIds);
 
         return $pageIds;
     }

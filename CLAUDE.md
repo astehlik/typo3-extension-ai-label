@@ -159,11 +159,14 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
 
 ## Backend UI
 
-- The overview module (`Configuration/Backend/Modules.php`) sets
-  `'inheritNavigationComponentFromMainModule' => true` (explicit user request,
-  2026-09-11, reversing the original design) - it shows the Web module's page tree.
-  Selecting a page scopes the listing to that page plus its recursive subpages;
-  no selection (or the virtual root, `id=0`) keeps the original site-wide listing.
+- The overview module shows the Web module's page tree (explicit user request,
+  2026-09-11, reversing the original design). `Configuration/Backend/Modules.php`
+  therefore carries **no** `inheritNavigationComponentFromMainModule` key at all -
+  inheriting from the parent module is core's own default
+  (`BaseModule::$inheritNavigationComponent = true`); it was the removed `=> false`
+  that used to suppress the tree. Selecting a page scopes the listing to that page
+  plus its recursive subpages; no selection (or the virtual root, `id=0`) keeps the
+  original site-wide listing.
   `AiLabelOverviewController::handleRequest()` reads the standard `id` request
   parameter straight off the request itself (same convention core uses for every
   page-tree-bound module) - deliberately **not** modeled as a field on `AiLabelDemand`,
@@ -173,19 +176,23 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
   into each of those `f:be.uri`/`buildUriFromRoute()` calls directly keeps the
   page-tree selection intact across a request with zero extra state to thread through
   - no hidden form field, no demand property to keep in sync.
-  `B13\AiLabel\Backend\PageTreeScopeResolver` turns that single page id into the
-  recursive page-id list via `PageTreeRepository::getFlattenedPages()` (same walk,
-  same workspace/`PAGE_SHOW` rules as `AiMetadataRecordFinder::resolveAccessiblePageIds()`
-  - version-safe, identical on v13.4 and v14), returning `null` for "no page selected"
-  (id `<= 0`). The entry page id itself is *not* permission-checked here: the scope is
-  only ever an additional `AND`, `applyPermissionConstraints()` still runs on the same
-  query, so a page outside the user's mounts yields an empty result rather than a leak.
-  `AiMetadataRecordFinder::findFlaggedRecords(?array $pageIds)` applies that list at the
-  DB level, per table: `uid IN (...)` for the `pages` table itself (its `pid` only ever
-  points at its *parent*, so filtering pages by `pid` would drop the selected page and
-  only ever match its direct children), `pid IN (...)` for everything else. Root-level
-  tables therefore drop out of a page scope entirely - `sys_file_metadata` has `pid = 0`,
-  so selecting any page hides every flagged file. The scope is applied to the single
+  `B13\AiLabel\Backend\PageTreeScopeResolver` is the **only** page tree walk in the
+  extension - `resolveSelectedPage()` for the module's tree selection, `resolveSubtrees()`
+  for `AiMetadataRecordFinder`'s web mount scope, both on one
+  `PageTreeRepository::getFlattenedPages()` call with the same workspace (from `Context`,
+  never `$backendUser->workspace`) and the same `PAGE_SHOW` clause. Version-safe,
+  identical on v13.4 and v14. Entry points are deliberately **not** seeded into the
+  result: `getPageRecords()` already returns them itself, permission-filtered, so an id
+  the user may not see can never widen the scope (and never shows up twice either).
+  `resolveSelectedPage()` returns `null` for "no page selected" (id `<= 0`) and `[]` for
+  a page that is gone or unreadable - `findFlaggedRecords()` treats those as site-wide
+  and as "nothing matches" respectively, which is why the two must stay distinct.
+  `findFlaggedRecords(?array $pageIds)` applies the list at the DB level, per table:
+  `uid IN (...)` for the `pages` table itself (its `pid` only ever points at its
+  *parent*, so filtering pages by `pid` would drop the selected page and only ever match
+  its direct children), `pid IN (...)` for everything else. Root-level tables therefore
+  drop out of a page scope entirely - `sys_file_metadata` has `pid = 0`, so selecting any
+  page hides every flagged file. The scope is applied to the single
   `findFlaggedRecords()` call the statistics/distinct-table options and the filtered
   listing are all derived from, so selecting a page scopes all of those together,
   not just the listing rows.

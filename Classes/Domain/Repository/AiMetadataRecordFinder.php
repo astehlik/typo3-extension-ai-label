@@ -12,13 +12,13 @@ namespace B13\AiLabel\Domain\Repository;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Backend\PageTreeScopeResolver;
 use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
 use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use TYPO3\CMS\Backend\Tree\Repository\PageTreeRepository;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
@@ -34,7 +34,6 @@ use TYPO3\CMS\Core\Schema\Capability\RootLevelCapability;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\TcaSchema;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
-use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Versioning\VersionState;
 
@@ -59,8 +58,6 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 // an 'editable' flag callers use to decide whether to link it for editing.
 final class AiMetadataRecordFinder
 {
-    private const PAGE_TREE_DEPTH = 99;
-
     /** @var list<int>|null Resolved once, the finder walks every applicable table. */
     private ?array $accessiblePageIds = null;
 
@@ -73,6 +70,7 @@ final class AiMetadataRecordFinder
         private readonly IconFactory $iconFactory,
         private readonly EventDispatcherInterface $eventDispatcher,
         private readonly AiLabelAccessChecker $accessChecker,
+        private readonly PageTreeScopeResolver $pageTreeScopeResolver,
     ) {
     }
 
@@ -82,6 +80,11 @@ final class AiMetadataRecordFinder
      */
     public function findFlaggedRecords(?array $pageIds = null): array
     {
+        if ($pageIds === []) {
+            // An empty scope is not the same as no scope - nothing can match it.
+            return [];
+        }
+
         $records = [];
         foreach ($this->applicableTablesProvider->getApplicableTables() as $table) {
             $records = array_merge($records, $this->findFlaggedRecordsForTable($table, $pageIds));
@@ -292,26 +295,10 @@ final class AiMetadataRecordFinder
             return $this->accessiblePageIds;
         }
 
-        $webMounts = $backendUser->getWebmounts();
-        if ($webMounts === []) {
-            return $this->accessiblePageIds = [];
-        }
-
-        // Without the workspace the repository's own WorkspaceRestriction drops pages that
-        // exist only in this workspace, and with them every record on such a page.
-        $pageTreeRepository = GeneralUtility::makeInstance(
-            PageTreeRepository::class,
-            (int)$this->context->getPropertyFromAspect('workspace', 'id')
+        return $this->accessiblePageIds = $this->pageTreeScopeResolver->resolveSubtrees(
+            $backendUser->getWebmounts(),
+            $backendUser
         );
-        $pageTreeRepository->setAdditionalWhereClause($backendUser->getPagePermsClause(Permission::PAGE_SHOW));
-
-        // The mounts themselves are accessible, the walk adds what is below them.
-        $pageIds = $webMounts;
-        foreach ($pageTreeRepository->getFlattenedPages($webMounts, self::PAGE_TREE_DEPTH) as $page) {
-            $pageIds[] = (int)$page['uid'];
-        }
-
-        return $this->accessiblePageIds = array_values(array_unique($pageIds));
     }
 
     private function livesOnRootLevelOnly(string $table): bool
