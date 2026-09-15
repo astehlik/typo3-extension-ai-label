@@ -124,6 +124,21 @@ final class AfterFileContentChangedListenerTest extends FunctionalTestCase
         self::assertCount(0, $this->flashMessages());
     }
 
+    // No authenticated backend user: the reset cannot happen, the replace still must.
+    #[Test]
+    public function survivesAReplaceWithoutAnAuthenticatedBackendUser(): void
+    {
+        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
+        $file = $this->getFile(3);
+        unset($GLOBALS['BE_USER']);
+
+        $this->get(AfterFileContentChangedListener::class)->__invoke(new AfterFileReplacedEvent($file, '/tmp/whatever'));
+
+        // The review stays as it was.
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/FlaggedAndReviewedFileUnchangedResult.csv');
+    }
+
     private function dispatchReplacedEvent(int $fileUid): void
     {
         $file = $this->getFile($fileUid);

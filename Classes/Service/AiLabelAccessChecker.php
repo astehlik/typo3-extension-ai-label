@@ -31,7 +31,12 @@ final class AiLabelAccessChecker
     public function isReadable(string $table, array $row): bool
     {
         $backendUser = $this->getBackendUser();
-        if ($backendUser === null || $backendUser->isAdmin()) {
+        // Deny rather than allow without a user: there is nothing to check against, and
+        // the finder is reachable outside a backend request.
+        if ($backendUser === null) {
+            return false;
+        }
+        if ($backendUser->isAdmin()) {
             return true;
         }
         if ($table === 'sys_file_metadata') {
@@ -45,7 +50,10 @@ final class AiLabelAccessChecker
     public function isEditable(string $table, array $row): bool
     {
         $backendUser = $this->getBackendUser();
-        if ($backendUser === null || $backendUser->isAdmin()) {
+        if ($backendUser === null) {
+            return false;
+        }
+        if ($backendUser->isAdmin()) {
             return true;
         }
         if ($table === 'sys_file_metadata') {

@@ -13,7 +13,9 @@ namespace B13\AiLabel\Tests\Functional\Repository;
  */
 
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
+use B13\AiLabel\Service\AiLabelAccessChecker;
 use PHPUnit\Framework\Attributes\Test;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
@@ -63,6 +65,17 @@ final class AiMetadataRecordFinderPermissionsTest extends FunctionalTestCase
 
         $backendUser = $GLOBALS['BE_USER'] = $this->setUpBackendUser(2);
         $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($backendUser);
+    }
+
+    #[Test]
+    public function nothingIsAccessibleWithoutABackendUser(): void
+    {
+        unset($GLOBALS['BE_USER']);
+        $accessChecker = $this->get(AiLabelAccessChecker::class);
+        $row = BackendUtility::getRecord('tt_content', 100) ?? [];
+
+        self::assertFalse($accessChecker->isReadable('tt_content', $row));
+        self::assertFalse($accessChecker->isEditable('tt_content', $row));
     }
 
     #[Test]

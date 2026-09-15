@@ -34,6 +34,7 @@ final class AiWatermarkOverrideHandlerHookTest extends FunctionalTestCase
     protected array $coreExtensionsToLoad = [
         'filelist',
         'fluid_styled_content',
+        'workspaces',
     ];
 
     protected array $testExtensionsToLoad = [
@@ -62,6 +63,30 @@ final class AiWatermarkOverrideHandlerHookTest extends FunctionalTestCase
         copy(__DIR__ . '/../Imaging/Fixtures/flagged.jpg', Environment::getPublicPath() . '/fileadmin/flagged.jpg');
         $this->backendUser = $GLOBALS['BE_USER'] = $this->setUpBackendUser(1);
         $this->dataHandler = GeneralUtility::makeInstance(DataHandler::class);
+    }
+
+    // sys_file_metadata is workspace aware, so DataHandler swaps $id to the version
+    // between the hook's two methods, exactly as it does for the ai metadata hook.
+    #[Test]
+    public function anOverrideSetInsideAWorkspaceLandsOnTheVersion(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiWatermarkOverrideHandlerHook/Workspace.csv');
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/AiWatermarkOverrideHandlerHook/FlaggedFile.csv');
+        $this->backendUser->workspace = 1;
+
+        $data = [
+            'sys_file_metadata' => [
+                1 => [
+                    'tx_ailabel_watermark_position' => 'top-left',
+                    'tx_ailabel_watermark_color' => 'white',
+                    'tx_ailabel_watermark_width' => '80',
+                ],
+            ],
+        ];
+        $this->dataHandler->start($data, [], $this->backendUser);
+        $this->dataHandler->process_datamap();
+
+        self::assertCSVDataSet(__DIR__ . '/Fixtures/AiWatermarkOverrideHandlerHook/WorkspaceOverrideLandsOnVersionResult.csv');
     }
 
     #[Test]

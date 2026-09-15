@@ -8,7 +8,7 @@ $EM_CONF[$_EXTKEY] = [
     'author_email' => 'typo3@b13.com',
     'author_company' => 'b13 GmbH',
     'state' => 'stable',
-    'version' => '1.2.0',
+    'version' => '1.2.2',
     'constraints' => [
         'depends' => [
             'typo3' => '13.4.0-14.99.99',
@@ -17,6 +17,7 @@ $EM_CONF[$_EXTKEY] = [
         'suggests' => [
             'fluid_styled_content' => '13.4.0-14.99.99',
             'filelist' => '13.4.0-14.99.99',
+            'workspaces' => '13.4.0-14.99.99',
         ],
     ],
 ];
