@@ -464,7 +464,13 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   `['packageName' => 'b13/ai-label']` as its options - `BackendViewFactory` builds the
   template search paths from it alone, so without it Fluid only ever looks inside
   `EXT:backend` and every render dies with `InvalidTemplateResourceException`. Assertions
-  run against the rendered body, so expected label text is HTML-escaped (`&quot;`).
+  run against the rendered body, so expected label text is HTML-escaped (`&quot;`,
+  `&amp;` inside hrefs). **One render per test**: `ModuleTemplate` pulls
+  `DocHeaderComponent` from the container, so a second `handleRequest()` in the same
+  process still finds the first one's `ShortcutButton` in the button bar and trips
+  core's "manually adding ShortcutButton" deprecation, which `failOnDeprecation="true"`
+  turns into a failure. Production renders a module once per request, so this is a test
+  artifact only.
 - Testing DataProcessors: just instantiate directly and call `->process($cObj, ...)` -
   no Fluid needed, see `AiLabelProcessorTest`.
 - Testing ViewHelpers: needs an actual Fluid render pass to be meaningful (namespace

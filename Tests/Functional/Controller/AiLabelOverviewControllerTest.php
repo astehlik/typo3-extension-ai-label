@@ -83,6 +83,18 @@ class AiLabelOverviewControllerTest extends FunctionalTestCase
         self::assertStringContainsString('Search all pages', $body);
     }
 
+    // Proves the de.locallang_mod.xlf overlay is actually picked up, placeholder included.
+    #[Test]
+    public function theScopedEmptyStateIsTranslated(): void
+    {
+        $this->switchToGerman();
+
+        $body = $this->renderModule(13);
+
+        self::assertStringContainsString('Unterhalb von „Empty child“ sind keine Datensätze', $body);
+        self::assertStringContainsString('Alle Seiten durchsuchen', $body);
+    }
+
     #[Test]
     public function theFilteredEmptyStateStaysPlainWithoutAPageSelected(): void
     {
@@ -90,6 +102,65 @@ class AiLabelOverviewControllerTest extends FunctionalTestCase
 
         self::assertStringContainsString('No flagged records match the current filter', $body);
         self::assertStringNotContainsString('Search all pages', $body);
+    }
+
+    /**
+     * "Search all pages" links to id=0, which is "nothing selected", not the page with
+     * uid 0 - no editor ever needs access to the root for it. The listing falls back to
+     * the web mount scope the finder applies anyway.
+     */
+    #[Test]
+    public function searchAllPagesLeavesAnEditorWithTheirOwnMountOnly(): void
+    {
+        $this->switchToEditor();
+
+        $body = $this->renderModule(0);
+
+        self::assertStringContainsString('On the root', $body);
+        self::assertStringContainsString('On the grandchild', $body);
+        self::assertStringNotContainsString('On the unmounted root', $body);
+        self::assertStringNotContainsString('Nothing flagged', $body);
+    }
+
+    // The button drops the page scope rather than pointing at a page uid the editor
+    // would need access to. Only one render per test - DocHeaderComponent is shared,
+    // so a second one still sees the first one's ShortcutButton and deprecates.
+    #[Test]
+    public function searchAllPagesDropsTheScopeRatherThanTargetingARootPage(): void
+    {
+        $this->switchToEditor();
+
+        $body = $this->renderModule(13);
+
+        self::assertStringContainsString('Search all pages', $body);
+        self::assertMatchesRegularExpression('/href="[^"]*(?:\?|&amp;)id=0(?:&amp;|")[^>]*>\s*Search all pages/', $body);
+    }
+
+    // The button only exists in the two empty states - a scoped listing that has rows
+    // offers no way back other than the page tree itself.
+    #[Test]
+    public function aScopedListingWithResultsHasNoWayBackButTheTree(): void
+    {
+        $this->switchToEditor();
+
+        $body = $this->renderModule(11);
+
+        self::assertStringContainsString('On the grandchild', $body);
+        self::assertStringNotContainsString('Search all pages', $body);
+    }
+
+    private function switchToEditor(): void
+    {
+        $backendUser = $GLOBALS['BE_USER'] = $this->setUpBackendUser(2);
+        $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)
+            ->createFromUserPreferences($backendUser);
+    }
+
+    private function switchToGerman(): void
+    {
+        $GLOBALS['BE_USER']->user['lang'] = 'de';
+        $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)
+            ->createFromUserPreferences($GLOBALS['BE_USER']);
     }
 
     /** @param array<string, mixed> $queryParams */
