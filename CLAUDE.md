@@ -146,6 +146,13 @@ nothing version-specific remained (e.g. `MarkFlaggedPageInLayoutModule` - `getBa
 doesn't touch `ComponentFactory`, and `ModifyPageLayoutContentEvent` is identical on both
 versions). Always check first whether the split is still needed before adding one.
 
+Not every split needs its own class: `AiLabelOverviewController::addShortcut()` keeps
+both paths inline behind a `Typo3Version` guard, because only one *method call* differs -
+v14 wants `DocHeaderComponent::setShortcutContext()`, and handing a `ShortcutButton` to
+the button bar by hand is deprecated there and gone in v15; v13 has no such method and
+keeps `addButton()`. `Build/phpstan13-baseline.neon` carries the resulting
+`method.notFound`. Same for `AiLabelAccessChecker`.
+
 Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`,
 lazily via `GeneralUtility::makeInstance()` since it can't be constructor-injected - this
 class is instantiated on both versions; v13 `createButtonHtml()` builds raw HTML),
@@ -196,6 +203,12 @@ Known version-safe APIs (confirmed identical on v13.4 and v14, no split needed):
   `findFlaggedRecords()` call the statistics/distinct-table options and the filtered
   listing are all derived from, so selecting a page scopes all of those together,
   not just the listing rows.
+- Both of the overview module's empty states name the page-tree scope when one is active
+  (`overview.empty.message.inPageTree`/`overview.noEntries.filtered.inPageTree`), plus a
+  "Search all pages" link built from `defaultRouteParams($demand, 0)` - filters kept, `id`
+  dropped. Without that, "Nothing flagged" reads as a statement about the whole site while
+  it only ever describes the selected subtree. `scopeLabel` is the page title, falling back
+  to `[uid]` for a page that is gone or unreadable, since the scope still has to be named.
 - `AiMetadataBadgeFactory::getBadge()` is the single source of truth for label/color
   (`ReviewStatus` value object) - used by the record list/file list dropdowns, the layout
   module badges, the form legend (`VirtualCheckboxElement`), and the overview module.
@@ -445,6 +458,13 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   `typo3/cms-workspaces` needs to be present in `require-dev`.
 - `coreExtensionsToLoad` also needs `'filelist'` for any test that boots the full
   extension (composer-required at dev-time even though not at runtime - see above).
+- Testing the overview module end to end (`AiLabelOverviewControllerTest`): call
+  `handleRequest()` on the controller from the container with a `ServerRequest` carrying
+  `applicationType`, `normalizedParams` and a `route` attribute. That route needs
+  `['packageName' => 'b13/ai-label']` as its options - `BackendViewFactory` builds the
+  template search paths from it alone, so without it Fluid only ever looks inside
+  `EXT:backend` and every render dies with `InvalidTemplateResourceException`. Assertions
+  run against the rendered body, so expected label text is HTML-escaped (`&quot;`).
 - Testing DataProcessors: just instantiate directly and call `->process($cObj, ...)` -
   no Fluid needed, see `AiLabelProcessorTest`.
 - Testing ViewHelpers: needs an actual Fluid render pass to be meaningful (namespace

@@ -1,6 +1,12 @@
 parameters:
 	ignoreErrors:
 		-
+			message: '#^Call to an undefined method TYPO3\\CMS\\Backend\\Template\\Components\\DocHeaderComponent\:\:setShortcutContext\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: ../Classes/Controller/AiLabelOverviewController.php
+
+		-
 			message: '#^Access to constant primary on an unknown class TYPO3\\CMS\\Backend\\Template\\Components\\ActionGroup\.$#'
 			identifier: class.notFound
 			count: 1

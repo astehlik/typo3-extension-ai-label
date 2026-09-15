@@ -78,7 +78,7 @@ class AiMetadataRecordFinderPageTreeScopeTest extends FunctionalTestCase
     {
         $this->authenticate(1);
 
-        self::assertSame([1, 10, 11, 12], $this->resolve(1));
+        self::assertSame([1, 10, 11, 12, 13], $this->resolve(1));
     }
 
     #[Test]

@@ -5,6 +5,7 @@ pages
 ,10,1,1,"Child",1,1,31,31,1,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"
 ,11,10,1,"Grandchild",1,1,31,31,1,\NULL
 ,12,1,1,"Other child",1,1,31,31,1,\NULL
+,13,1,1,"Empty child",1,1,31,31,1,\NULL
 tt_content
 ,uid,pid,header,CType,tx_ailabel_metadata
 ,100,1,"On the root",text,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"

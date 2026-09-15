@@ -30,11 +30,20 @@
             <trans-unit id="overview.empty.message">
                 <source>No records are currently flagged as AI-created or AI-modified.</source>
             </trans-unit>
+            <trans-unit id="overview.empty.message.inPageTree">
+                <source>No records below "%s" are flagged as AI-created or AI-modified. Other parts of the page tree may still contain flagged records.</source>
+            </trans-unit>
             <trans-unit id="overview.noEntries.title">
                 <source>No matches</source>
             </trans-unit>
             <trans-unit id="overview.noEntries.filtered">
                 <source>No flagged records match the current filter.</source>
+            </trans-unit>
+            <trans-unit id="overview.noEntries.filtered.inPageTree">
+                <source>No flagged records below "%s" match the current filter. Other parts of the page tree may still contain matches.</source>
+            </trans-unit>
+            <trans-unit id="overview.scope.showAll">
+                <source>Search all pages</source>
             </trans-unit>
             <trans-unit id="overview.pagination">
                 <source>Pagination</source>
