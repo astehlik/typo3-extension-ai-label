@@ -12,6 +12,7 @@ namespace B13\AiLabel\EventListener;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Domain\Repository\AiMetadataRecordFinder;
 use B13\AiLabel\Service\AiLabelAccessChecker;
@@ -45,6 +46,7 @@ final class MarkFlaggedPageInLayoutModule
         private readonly PageRenderer $pageRenderer,
         private readonly UriBuilder $uriBuilder,
         private readonly AiLabelAccessChecker $accessChecker,
+        private readonly ApplicableTablesProvider $applicableTablesProvider,
     ) {
     }
 
@@ -62,11 +64,16 @@ final class MarkFlaggedPageInLayoutModule
         $returnUrl = (string)$request->getUri();
         $headerContent = '';
 
-        $row = BackendUtility::getRecord('pages', $pageId);
-        $pageMetadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
-        if ($pageMetadata->isFlagged()) {
-            $href = $this->accessChecker->isEditable('pages', $row) ? $this->buildEditUrl('pages', $pageId, $returnUrl) : null;
-            $headerContent .= '<div class="ai-label-page-marker">' . $this->badgeFactory->getBadge($pageMetadata, $href) . '</div>';
+        // Only the page's own badge depends on "pages" being applicable - dropped from
+        // ApplicableTablesEvent, the column does not exist. The content element badges
+        // below are tt_content and carry their own guard.
+        if ($this->applicableTablesProvider->isTableApplicable('pages')) {
+            $row = BackendUtility::getRecord('pages', $pageId);
+            $pageMetadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
+            if ($pageMetadata->isFlagged()) {
+                $href = $this->accessChecker->isEditable('pages', $row) ? $this->buildEditUrl('pages', $pageId, $returnUrl) : null;
+                $headerContent .= '<div class="ai-label-page-marker">' . $this->badgeFactory->getBadge($pageMetadata, $href) . '</div>';
+            }
         }
 
         $contentBadges = [];

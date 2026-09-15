@@ -484,6 +484,18 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   core's "manually adding ShortcutButton" deprecation, which `failOnDeprecation="true"`
   turns into a failure. Production renders a module once per request, so this is a test
   artifact only.
+- Testing an integrator's `ApplicableTablesEvent` override needs a real fixture
+  extension, not a runtime listener: `AddAiMetaFieldsToTca` runs at TCA-build time and
+  the DB schema is derived from it, so a listener registered inside a test method is far
+  too late - the column already exists.
+  `Tests/Functional/Fixtures/Extensions/ai_label_no_pages` drops `pages`, and
+  `MarkFlaggedPageInLayoutModuleWithoutPagesTest` asserts the column genuinely is not
+  there. Two traps: its namespace must be listed in the **root** `composer.json`'s
+  `autoload-dev` (Symfony's `resource: '../Classes/*'` resolves classes through the root
+  autoloader and fails the container build otherwise), and on v14 the fixture must be
+  composer-only - an `ext_emconf.php` triggers a deprecation that `failOnDeprecation`
+  turns into a failure, so its `composer.json` carries `version` plus
+  `extra.typo3/cms.Package.providesPackages` (see `PackageManager::isComposerOnlyCapable()`).
 - Testing DataProcessors: just instantiate directly and call `->process($cObj, ...)` -
   no Fluid needed, see `AiLabelProcessorTest`.
 - Testing ViewHelpers: needs an actual Fluid render pass to be meaningful (namespace
