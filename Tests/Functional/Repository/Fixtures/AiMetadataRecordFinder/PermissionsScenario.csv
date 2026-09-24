@@ -1,0 +1,43 @@
+be_groups
+,uid,pid,title,explicit_allowdeny,tables_select,tables_modify
+,1,0,"Editors","tt_content:CType:text","pages,tt_content,sys_file_metadata","pages,tt_content,sys_file_metadata"
+
+be_users
+,uid,pid,admin,usergroup,db_mountpoints,file_mountpoints,file_permissions
+,2,0,0,1,10,"1,2","readFile,readFolder"
+
+sys_filemounts
+,uid,pid,title,identifier,read_only
+,1,0,"Writable mount","1:/",0
+,2,0,"Read-only mount","2:/",1
+
+sys_file_storage
+,uid,pid,name,driver,configuration,is_online,is_browsable,is_public,auto_extract_metadata
+,1,0,"writable-storage","Local","<?xml version=""1.0"" encoding=""utf-8"" standalone=""yes"" ?><T3FlexForms><data><sheet index=""sDEF""><language index=""lDEF""><field index=""basePath""><value index=""vDEF"">fileadmin/</value></field><field index=""pathType""><value index=""vDEF"">relative</value></field></language></sheet></data></T3FlexForms>",1,1,1,0
+,2,0,"readonly-storage","Local","<?xml version=""1.0"" encoding=""utf-8"" standalone=""yes"" ?><T3FlexForms><data><sheet index=""sDEF""><language index=""lDEF""><field index=""basePath""><value index=""vDEF"">fileadmin/</value></field><field index=""pathType""><value index=""vDEF"">relative</value></field></language></sheet></data></T3FlexForms>",1,1,1,0
+,3,0,"unmounted-storage","Local","<?xml version=""1.0"" encoding=""utf-8"" standalone=""yes"" ?><T3FlexForms><data><sheet index=""sDEF""><language index=""lDEF""><field index=""basePath""><value index=""vDEF"">fileadmin/</value></field><field index=""pathType""><value index=""vDEF"">relative</value></field></language></sheet></data></T3FlexForms>",1,1,1,0
+
+sys_file
+,uid,pid,storage,identifier,identifier_hash,folder_hash,extension,mime_type,name,sha1,size,type
+,1,0,1,/editable.txt,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",txt,text/plain,editable.txt,"cccccccccccccccccccccccccccccccccccccccc",0,2
+,2,0,2,/readonly.txt,"dddddddddddddddddddddddddddddddddddddddd","eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",txt,text/plain,readonly.txt,"ffffffffffffffffffffffffffffffffffffffff",0,2
+,3,0,3,/unmounted.txt,"1111111111111111111111111111111111111111","2222222222222222222222222222222222222222",txt,text/plain,unmounted.txt,"3333333333333333333333333333333333333333",0,2
+
+sys_file_metadata
+,uid,pid,file,tx_ailabel_metadata
+,1,0,1,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,2,0,2,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,3,0,3,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+
+pages
+,uid,pid,doktype,perms_userid,perms_groupid,perms_user,perms_group,perms_everybody,tx_ailabel_metadata
+,1,0,1,0,0,31,31,31,\NULL
+,10,1,1,0,0,31,31,19,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,11,10,1,0,0,31,31,1,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,20,1,1,0,0,31,31,31,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+
+tt_content
+,uid,pid,tx_ailabel_metadata
+,100,10,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,101,11,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"
+,102,20,"{""origin"":1,""reviewed_by"":0,""reviewed_timestamp"":0}"

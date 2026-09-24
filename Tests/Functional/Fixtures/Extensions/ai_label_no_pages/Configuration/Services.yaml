@@ -1,0 +1,12 @@
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+    public: false
+
+  B13\AiLabelNoPages\:
+    resource: '../Classes/*'
+
+  B13\AiLabelNoPages\EventListener\RemovePagesFromApplicableTables:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label-no-pages/remove-pages' }

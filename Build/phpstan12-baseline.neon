@@ -1,6 +1,12 @@
 parameters:
 	ignoreErrors:
 		-
+			message: '#^Call to an undefined method TYPO3\\CMS\\Backend\\Template\\Components\\DocHeaderComponent\:\:setShortcutContext\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: ../Classes/Controller/AiLabelOverviewController.php
+
+		-
 			message: '#^Access to constant SMALL on an unknown class TYPO3\\CMS\\Core\\Imaging\\IconSize\.$#'
 			identifier: class.notFound
 			count: 1
@@ -77,6 +83,12 @@ parameters:
 			identifier: function.alreadyNarrowedType
 			count: 2
 			path: ../Classes/Imaging/AiWatermark.php
+
+		-
+			message: '#^Call to an undefined method TYPO3\\CMS\\Core\\Authentication\\BackendUserAuthentication\:\:checkRecordEditAccess\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: ../Classes/Service/AiLabelAccessChecker.php
 
 		-
 			message: '#^Access to constant SMALL on an unknown class TYPO3\\CMS\\Core\\Imaging\\IconSize\.$#'

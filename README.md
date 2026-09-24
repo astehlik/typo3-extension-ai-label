@@ -22,8 +22,8 @@ tab with two things to fill in:
 Whenever a flagged record is edited again, the review is cleared automatically,
 so changed content always gets a fresh pair of eyes before it counts as checked.
 
-**For visitors**, every flagged content element automatically shows a small AI
-marker on the published page - no template work needed. The icons, wording and
+**For visitors**, a flagged content element automatically shows a small AI marker
+on the published page until it has been reviewed - no template work needed. The icons, wording and
 position can all be replaced with your own. Optionally, flagged **images** can
 carry the marker themselves, either as a layer drawn over the image or burned
 into its pixels so it survives being downloaded - see *Marking images
@@ -62,21 +62,25 @@ This is what the extension maps onto:
 | What the law asks for | How the extension covers it |
 | --- | --- |
 | Record whether content was generated or manipulated by AI | The **AI origin** field, using the law's own wording |
-| Show visitors a clear notice at first sight | The **AI marker**, rendered automatically on every flagged content element |
+| Show visitors a clear notice at first sight | The **AI marker**, rendered automatically on flagged content elements that have not been reviewed; flagged files carry their own marker once `imageMarker` is switched on |
 | Human review with editorial responsibility (the text exception) | The **Reviewed** checkbox, storing who checked it and when |
 | Keep that review meaningful over time | Editing a flagged record **resets** the review automatically |
 | Keep an overview of what is published | The **AI Label** backend module, plus the markers in the List, Filelist and Page modules |
 
 Two things worth knowing:
 
-- **The marker is shown for every flagged record**, including reviewed text.
-  The law would allow you to leave the label off properly reviewed text, but
-  showing it anyway is always permitted and is the safer default. If you want
-  different behaviour, override the `AiLabel` partial (see *Frontend
-  integration* below).
-- **Human review does not remove the duty for images, audio and video.** The
-  exception in Article 50(4) covers text only, so flagged media stays labelled
-  no matter how carefully it was checked.
+- **Reviewing a record drops its marker.** Article 50(4) allows leaving the label
+  off properly reviewed text, and that is what the shipped `AiLabel` partial does:
+  a record is marked while it is flagged and not yet reviewed. Showing the label
+  anyway is always permitted, so if you would rather mark reviewed content too,
+  override the `AiLabel` partial (see *Frontend integration* below).
+- **Human review does not remove the duty for images, audio and video, and the
+  extension does not make that distinction for you.** The exception in Article
+  50(4) covers text only, but the partial decides per *record*, with no CType
+  check - so a reviewed, flagged image element renders no marker either. Where
+  that duty applies, mark the file itself (*Marking images themselves* below,
+  which is flag-only and ignores the review), leave those records unreviewed, or
+  override the partial to skip the review condition for the CTypes concerned.
 
 This extension provides the tooling; it cannot make you compliant on its own.
 Whether a given piece of content falls under Article 50, and whether your review
@@ -109,6 +113,13 @@ is not legal advice.
   (re-)ticks "reviewed".
 - The "AI Label" backend module (Web menu) and the record/file list markers are
   workspace-aware, resolving records for the currently selected workspace.
+- The overview module (and the Page/Layout module's flagged-content badges) is
+  permission-aware for non-admin backend users: a record only shows up if its page
+  is inside the user's DB mount and readable (`sys_file_metadata`: its file inside a
+  mounted file storage/folder and readable), and only links to editing it if it's
+  actually editable - the same rules the Web > List/File > Filelist modules already
+  apply, just re-checked here since this module queries across the whole site
+  directly instead of going through those modules' own listings.
 - The two form fields carry TCA `description` texts explaining the Article 50
   duties in plain language, plus a palette description above them
   (`AddAiMetaFieldsToTca`, labels in `locallang_db.xlf`).
@@ -165,8 +176,9 @@ What this does for you:
 
 `aiMetadataUpdate()` is the lower-level method the three convenience methods
 above are built on; use it directly if you've already computed the full
-`AiMetadata` state yourself. `$aiMetadata = null` clears the column, same as
-`aiRemoved()`.
+`AiMetadata` state yourself. `$aiMetadata = null` clears the flag, same as
+`aiRemoved()` - it stores an empty JSON value rather than SQL `NULL`, since
+DataHandler coerces a submitted `null` for a json column into `[]`.
 
 ### Registering your own tables
 
@@ -188,6 +200,14 @@ final class RegisterMyTableForAiLabel
 
 (`removeApplicableTable()` is available too, if you need to opt a default
 table back out.)
+
+Run a database compare afterwards, in the Install Tool or with
+`bin/typo3 database:updateschema`: the `tx_ailabel_metadata` column is created
+from TCA, so a registered table without it breaks with
+`Unknown column 'tx_ailabel_metadata'` as soon as anything touches it - saving a
+record, listing the table in Web > List, and the AI Label module for every table,
+not just the new one. Tables you have not registered are left alone entirely and
+need nothing.
 
 ### Extending the overview module's record list
 
@@ -212,11 +232,31 @@ final class AddCustomColumnToAiLabelOverview
 more than what's already in `getRecord()` (which table it's from is in
 `getRecord()['table']`).
 
+### Reacting to processed file invalidation
+
+`ProcessedFileInvalidator` (see "baked" mode above) dispatches
+`B13\AiLabel\Event\BeforeProcessedFileInvalidatedEvent` once per processed file
+variant it actually deletes - listen to it to react to the removal elsewhere,
+e.g. purge the same variant from a CDN:
+
+```php
+#[AsEventListener]
+final class PurgeProcessedFileFromCdn
+{
+    public function __invoke(BeforeProcessedFileInvalidatedEvent $event): void
+    {
+        if ($event->processedFilePublicUrl !== null) {
+            $this->cdn->purge($event->processedFilePublicUrl);
+        }
+    }
+}
+```
+
 ## Frontend integration
 
-This extension renders a small AI-origin marker on every content element
-that is flagged (`tx_ailabel_origin` = "AI created" or "AI modified"), once
-its TypoScript is included in your project:
+This extension renders a small AI-origin marker on every content element that is
+flagged (`tx_ailabel_origin` = "AI created" or "AI modified") and not yet
+reviewed, once its TypoScript is included in your project:
 
 **Site-Set-based projects** (TYPO3 v13.4+): add `b13/ai-label` to your own
 Site Set's `dependencies` in `config.yaml` (for discoverability/settings
@@ -264,7 +304,10 @@ The `AiLabel` partial (`Resources/Private/Partials/AiLabel.html`):
 - Resolves the current record's `AiMetadata` via `<ailabel:recordMetadata>`
   (or, if a `file` argument is passed, e.g. from your own template,
   `<ailabel:fileMetadata>`).
-- Renders nothing unless `aiMetadata.flagged` is true.
+- Renders nothing unless the metadata says so, and the condition differs per
+  argument: a `record` has to be flagged **and** not reviewed, a `file` only has
+  to be flagged. The automatic integration always passes a `record`; the shipped
+  media partial is what passes a `file`, in `overlay` mode.
 - Outputs one of eight bundled SVG icons
   (`Resources/Public/Icons/ai_generated_*.svg` / `ai_modified_*.svg` -
   `black`/`white` x plain/`_transparent`, selected via the optional `variant`
@@ -276,7 +319,9 @@ The `AiLabel` partial (`Resources/Private/Partials/AiLabel.html`):
   `--ai-label-gridcolumn`, `--ai-label-alignitems`, `--ai-label-zindex`,
   `--ai-label-icon-width`, `--ai-label-icon-height`) - set these on a
   surrounding container in your own CSS to position the marker for a given
-  content element/component; the defaults just anchor it bottom-right.
+  content element/component. `--ai-label-position` and `--ai-label-inset` have no
+  fallback, so by default the marker stays in normal flow below the element,
+  right-aligned; `overlay` mode is what sets them to put it on the image.
 
 ### Marking images themselves
 
@@ -317,42 +362,61 @@ cached like any other processed image. Things to know:
   operator, so sites on GraphicsMagick silently keep the content element marker.
 - **SVGs are skipped** (they are never rasterised) as are images narrower than
   160px, where the badge would be unreadable anyway.
-- The badge is a constant 160px wide and is never enlarged beyond that, so it
-  stays a discreet mark rather than growing with the image. Only on images too
-  small to carry it does it shrink, to at most a quarter of the image width.
-- **Position and color are configurable.** Two extension configuration settings,
-  `watermarkPosition` (`top-left`/`top-right`/`bottom-left`/`bottom-right`,
-  default `bottom-right`) and `watermarkColor` (`black`/`white`, default
-  `black`), set the site-wide default - both match the previous, fixed
-  behaviour unless changed. A flagged file's own `sys_file_metadata` edit form
-  gets a "Watermark position"/"Watermark color" override (visible only in
-  `baked` mode) to set a different corner/color for that one file; leaving
-  either at "Inherit global setting" uses the site-wide default.
-- Only *processed* images are marked. If a template links an original file
-  directly, without any processing instruction, it is served unmarked.
+- The badge is a constant width and is never enlarged beyond that, so it stays
+  a discreet mark rather than growing with the image. Only on images too small
+  to carry it does it shrink, to at most a quarter of the image width.
+- **Position, color and width are configurable.** Three extension configuration
+  settings, `watermarkPosition` (`top-left`/`top-right`/`bottom-left`/
+  `bottom-right`, default `bottom-right`), `watermarkColor` (`black`/`white`,
+  default `black`) and `watermarkWidth` (`160`/`80`, default `160`), set the
+  site-wide defaults - all three match the previous, fixed behaviour unless
+  changed. Width is deliberately a fixed choice of two sizes, not a free-form
+  number, so an editor can't shrink the badge into illegibility or blow it up
+  past its own artwork's resolution. A flagged file's own `sys_file_metadata`
+  edit form gets a "Watermark position"/"Watermark color"/"Watermark width"
+  override (visible only in `baked` mode) to set a different corner/color/width
+  for that one file; leaving any of them at "Inherit global setting" uses the
+  site-wide default.
+- Only *processed* images are marked - which includes images rendered at their
+  own dimensions: `<f:image image="{file}" width="1920" />` on a 1920px wide
+  original still gets the badge, even though there is nothing to scale. What is
+  served unmarked is a genuinely direct link to the file, e.g. `{file.publicUrl}`
+  or a plain `<img src="{f:uri.resource()}" />`, since no processing happens at
+  all there.
 - Changing a file's AI flag, or its per-file watermark override, flushes that
-  file's processed variants, so the change takes effect on the next render.
+  file's processed variants, so the change takes effect on the next render. A
+  change to one of the *global* defaults does not - see the note below.
 
-> **Clear the processed files once, after switching this on.** FAL caches
+> **Flush the processed files after changing a global setting.** FAL caches
 > processed images on the original file, the task and its configuration - none of
-> which change when you flip this setting. Variants generated before you enabled
-> `baked` therefore stay in place, unmarked, and nothing regenerates them. Run
-> this once after enabling (or disabling) the mode:
+> which change when you flip `imageMarker`, `watermarkPosition`, `watermarkColor`
+> or `watermarkWidth`, because those live in the extension configuration rather
+> than on a record. Variants rendered before the change therefore stay exactly as
+> they were: unmarked if you just enabled `baked`, carrying the old corner, colour
+> or size if you changed one of those, and - after switching from `baked` to
+> `overlay` - carrying a burned-in badge that the new mode renders a *second* time
+> on top of.
 >
 > ```
-> vendor/bin/typo3 cleanup:localprocessedfiles --all --dry-run   # inspect first
-> vendor/bin/typo3 cleanup:localprocessedfiles --all
+> vendor/bin/typo3 ailabel:flushWatermarks
 > ```
 >
-> `--all` is required: without it the command only clears orphaned records and
-> stubs, and leaves exactly the valid, already-rendered variants you need gone.
-> The command lives in EXT:lowlevel. This is only needed when the *setting*
-> changes - from then on, changing an individual file's AI flag flushes that
-> file's variants by itself.
+> That flushes the processed variants of every AI-flagged file and nothing else;
+> they are regenerated on the next render. It works in any mode, which matters
+> when you switch *away* from `baked`. Changing an individual file's AI flag or
+> its per-file override still flushes that file by itself - this command is only
+> for the global settings.
+>
+> EXT:lowlevel's `cleanup:localprocessedfiles --all` does the job too, but throws
+> away every processed image in the installation, flagged or not (`--all` is
+> required there: without it the command only clears orphaned records and stubs,
+> and leaves exactly the valid, already-rendered variants you need gone).
 
-Both modes are additive to, not a replacement for, the content element marker -
-that keeps rendering either way, which is also what images falling into any of
-the exclusions above fall back to.
+Both modes are additive to, not a replacement for, the content element marker,
+and the two are decided separately: the element marker reads the *record's* own
+flag and review state, so a flagged image inside an unflagged or already reviewed
+element carries the image marker but no element marker. Images falling into any of
+the exclusions above fall back to the element marker alone.
 
 ### Overriding the default markup/icons
 
@@ -368,6 +432,22 @@ lib.contentElement {
     }
 }
 ```
+
+### Upgrading: flush the processed images once
+
+Images that were already rendered *before* they were flagged - or before
+`imageMarker` was switched to `baked` - can carry a leftover FAL record that
+keeps them from ever being processed again, so they stay unmarked no matter what
+is changed afterwards. This was fixed in the version that introduced this note;
+existing installations need one run to clear the records they already have:
+
+```
+vendor/bin/typo3 ailabel:flushWatermarks
+```
+
+Only relevant for the `baked` image marker mode. The command is safe to run at
+any time - it flushes the processed variants of AI-flagged files and nothing
+else, and they are regenerated on the next render.
 
 ### Upgrading an existing project with manual `AiLabel` calls
 
@@ -398,7 +478,7 @@ unmodified.
 The automatic rendering above is built entirely on the same public building
 blocks documented below - `AiMetadata`, the DataProcessor and the two
 ViewHelpers. Use them directly if you need the flag somewhere the automatic
-Footer hook doesn't reach (e.g. a custom Layout that doesn't use
+`DropIn/After/All` override doesn't reach (e.g. a custom Layout that doesn't use
 `fluid_styled_content`'s `Default` layout, or a per-image marker inside a
 gallery).
 

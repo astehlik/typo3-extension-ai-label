@@ -27,12 +27,22 @@
                     >
                         <f:format.raw>{record.icon}</f:format.raw>
                     </button>
-                    <be:link.editRecord uid="{record.uid}" table="{record.table}">
-                        <f:if condition="{record.title}">
-                            <f:then>{record.title}</f:then>
-                            <f:else>{record.tableLabel} #{record.uid}</f:else>
-                        </f:if>
-                    </be:link.editRecord>
+                    <f:if condition="{record.editable}">
+                        <f:then>
+                            <be:link.editRecord uid="{record.uid}" table="{record.table}">
+                                <f:if condition="{record.title}">
+                                    <f:then>{record.title}</f:then>
+                                    <f:else>{record.tableLabel} #{record.uid}</f:else>
+                                </f:if>
+                            </be:link.editRecord>
+                        </f:then>
+                        <f:else>
+                            <f:if condition="{record.title}">
+                                <f:then>{record.title}</f:then>
+                                <f:else>{record.tableLabel} #{record.uid}</f:else>
+                            </f:if>
+                        </f:else>
+                    </f:if>
                 </td>
                 <td>{record.tableLabel}</td>
                 <td>{record.author}</td>

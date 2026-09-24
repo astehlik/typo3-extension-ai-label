@@ -75,6 +75,26 @@ and frontend passthrough of the flag data. See `README.md` for the user-facing
     `$fieldArray['tx_ailabel_metadata']` as a **plain PHP array** (DataHandler/Doctrine
     JSON-encode it themselves for json-typed columns - encoding it yourself
     double-encodes it).
+- Both hook methods are called for **every** table DataHandler saves. The pre hook
+  filters itself by the two virtual fields; the post hook cannot, because its update
+  path deliberately runs even when a save carries no ai fields (imports, scheduler),
+  so it filters by `ApplicableTablesProvider::isTableApplicable()` instead. Without
+  that it reads `tx_ailabel_metadata` on tables that have no such column, which
+  MySQL/MariaDB reject with "Unknown column" while SQLite quietly answers with the
+  column name as a string literal.
+  **This applies to `AiWatermarkOverrideHandlerHook` just as much**, and bit us there:
+  its post hook mapped `$id` back to the live record through
+  `BackendUtility::getRecord($table, $id, 't3ver_oid')` before any guard, so saving a
+  record in *any* table without `ctrl.versioningWS` (`fe_users`, `fe_groups`,
+  `sys_file`, ...) died with `InvalidFieldNameException: Unknown column 't3ver_oid'`.
+  It now returns on anything but `sys_file_metadata` before touching a column. Note
+  the guard is the concrete table, **not** `isTableApplicable()` as in the ai metadata
+  hook: `tx_ailabel_metadata` exists on every applicable table, while
+  `AddWatermarkFieldsToTca` only ever puts `tx_ailabel_watermark` on
+  `sys_file_metadata`, so the applicable-tables set would be too wide here. Whenever a
+  hook that fires for every table touches a column, ask which tables actually have it -
+  `versioningWS` is *not* a given (most core tables have it, which is exactly why this
+  stayed hidden).
 - Business rule: as long as a record is flagged, a save that changes real content resets
   `reviewed_by` to 0 - *unless* that same save also actively ticks "reviewed" from
   unreviewed to reviewed ("reviewed wins"). Reviewed merely *staying* ticked (checkbox
@@ -150,6 +170,13 @@ nothing version-specific remained (e.g. `MarkFlaggedPageInLayoutModule` - `getBa
 doesn't touch `ComponentFactory`, and `ModifyPageLayoutContentEvent` is identical on both
 versions). Always check first whether the split is still needed before adding one.
 
+Not every split needs its own class: `AiLabelOverviewController::addShortcut()` keeps
+both paths inline behind a `Typo3Version` guard, because only one *method call* differs -
+v14 wants `DocHeaderComponent::setShortcutContext()`, and handing a `ShortcutButton` to
+the button bar by hand is deprecated there and gone in v15; v12/v13 have no such method and
+keep `addButton()`. `Build/phpstan13-baseline.neon`/`Build/phpstan12-baseline.neon` carry the
+resulting `method.notFound`. Same for `AiLabelAccessChecker`.
+
 Current split: `AiMetadataBadgeFactory` (v14 `createButton()` uses `ComponentFactory`;
 v12/v13 `createButtonHtml()` builds raw HTML, plus its own internal `Typo3Version`
 branch for the icon-size argument, since `IconSize` doesn't exist before v13),
@@ -216,10 +243,49 @@ version changes. `IconSize::SMALL` in the same class goes through
 
 ## Backend UI
 
-- The overview module (`Configuration/Backend/Modules.php`) sets
-  `'inheritNavigationComponentFromMainModule' => false` - it's not page-tree-scoped
-  (lists flagged records across the whole site), so it shouldn't show the Web module's
-  page tree in the navigation component.
+- The overview module shows the Web module's page tree (explicit user request,
+  2026-09-11, reversing the original design). `Configuration/Backend/Modules.php`
+  therefore carries **no** `inheritNavigationComponentFromMainModule` key at all -
+  inheriting from the parent module is core's own default
+  (`BaseModule::$inheritNavigationComponent = true`); it was the removed `=> false`
+  that used to suppress the tree. Selecting a page scopes the listing to that page
+  plus its recursive subpages; no selection (or the virtual root, `id=0`) keeps the
+  original site-wide listing.
+  `AiLabelOverviewController::handleRequest()` reads the standard `id` request
+  parameter straight off the request itself (same convention core uses for every
+  page-tree-bound module) - deliberately **not** modeled as a field on `AiLabelDemand`,
+  which stays scoped to filter/sort/paging state only. Every URL the module builds
+  (the pagination base URL, the sort links, the filter form's own `action`, the
+  "reset filters" links) is a link back to this same module route, so baking `id`
+  into each of those `f:be.uri`/`buildUriFromRoute()` calls directly keeps the
+  page-tree selection intact across a request with zero extra state to thread through
+  - no hidden form field, no demand property to keep in sync.
+  `B13\AiLabel\Backend\PageTreeScopeResolver` is the **only** page tree walk in the
+  extension - `resolveSelectedPage()` for the module's tree selection, `resolveSubtrees()`
+  for `AiMetadataRecordFinder`'s web mount scope, both on one
+  `PageTreeRepository::getFlattenedPages()` call with the same workspace (from `Context`,
+  never `$backendUser->workspace`) and the same `PAGE_SHOW` clause. Version-safe,
+  identical on v13.4 and v14. Entry points are deliberately **not** seeded into the
+  result: `getPageRecords()` already returns them itself, permission-filtered, so an id
+  the user may not see can never widen the scope (and never shows up twice either).
+  `resolveSelectedPage()` returns `null` for "no page selected" (id `<= 0`) and `[]` for
+  a page that is gone or unreadable - `findFlaggedRecords()` treats those as site-wide
+  and as "nothing matches" respectively, which is why the two must stay distinct.
+  `findFlaggedRecords(?array $pageIds)` applies the list at the DB level, per table:
+  `uid IN (...)` for the `pages` table itself (its `pid` only ever points at its
+  *parent*, so filtering pages by `pid` would drop the selected page and only ever match
+  its direct children), `pid IN (...)` for everything else. Root-level tables therefore
+  drop out of a page scope entirely - `sys_file_metadata` has `pid = 0`, so selecting any
+  page hides every flagged file. The scope is applied to the single
+  `findFlaggedRecords()` call the statistics/distinct-table options and the filtered
+  listing are all derived from, so selecting a page scopes all of those together,
+  not just the listing rows.
+- Both of the overview module's empty states name the page-tree scope when one is active
+  (`overview.empty.message.inPageTree`/`overview.noEntries.filtered.inPageTree`), plus a
+  "Search all pages" link built from `defaultRouteParams($demand, 0)` - filters kept, `id`
+  dropped. Without that, "Nothing flagged" reads as a statement about the whole site while
+  it only ever describes the selected subtree. `scopeLabel` is the page title, falling back
+  to `[uid]` for a page that is gone or unreadable, since the scope still has to be named.
 - `AiMetadataBadgeFactory::getBadge()` is the single source of truth for label/color
   (`ReviewStatus` value object) - used by the record list/file list dropdowns, the layout
   module badges, the form legend (`VirtualCheckboxElement`), and the overview module.
@@ -390,9 +456,16 @@ DataProcessorInterface` is a class-declaration-level dependency (`implements`, n
 type hint) - PHP resolves that eagerly when the file is loaded, and `Services.yaml`'s
 `resource: '../Classes/*'` autowiring scan loads every class regardless of whether it's
 ever used. Missing `cms-frontend` would hard-crash the *entire* container compilation,
-not just the DataProcessor. (`typo3/cms-workspaces` would have the same problem if
-`AiMetadataRecordFinder` ever started implementing a workspaces-provided interface -
-currently it only calls static `BackendUtility` methods, which stays lazy/safe.)
+not just the DataProcessor. `typo3/cms-workspaces` would have the same problem if
+anything ever started implementing a workspaces-provided interface.
+
+`typo3/cms-workspaces` is `require-dev` and `suggests`/`suggest` only:
+`RepairMetadataAfterPublish` names `AfterRecordPublishedEvent` as a method-parameter type
+hint, which `ListenerProviderPass` resolves through `ReflectionNamedType::getName()`
+without autoloading, so the listener is dormant when workspaces is absent - same
+mechanism as `MarkFlaggedFilesInFileList` with filelist. Without it, publishing writes
+the JSON column back double-encoded and every consumer reads the record as unflagged, so
+an installation that uses workspaces needs it.
 
 Before adding a new hard dependency, check whether the usage is a type hint (safe,
 can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
@@ -400,11 +473,28 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
 
 ## Testing
 
-- Functional tests only (`typo3/testing-framework`), no unit tests. Run:
+- Functional tests only (`typo3/testing-framework`), no unit tests. Everything runs
+  through `Build/Scripts/runTests.sh`, which uses the TYPO3 Core CI images, so no
+  local PHP is needed. The one exception is `-s phpstan13`, which analyses whatever
+  sits in `.Build` and therefore needs the v13 dependency set installed first
+  (`composer require typo3/cms-backend:^13.4 --dev -W`); against a v14 `.Build` its
+  baseline no longer matches and it reports unrelated errors:
   ```
-  php -d memory_limit=2G .Build/bin/phpunit -c Build/phpunit/FunctionalTests.xml Tests/Functional
-  php -d memory_limit=2G .Build/bin/phpstan analyse -c Build/phpstan.neon
+  Build/Scripts/runTests.sh                              # functional, MySQL
+  Build/Scripts/runTests.sh -s functional -d sqlite      # or -d mariadb
+  Build/Scripts/runTests.sh -s phpstan                   # -s phpstan13, cgl, lint
+  Build/Scripts/runTests.sh -- --filter tickingReviewed   # arguments go to phpunit
   ```
+  What is installed in `.Build` has to fit the PHP version the script picks (`-p`,
+  default 8.4): composer resolves phpunit against the PHP that installed it, and a
+  phpunit built for 8.4 refuses to start on 8.2.
+- **The suite is only green on MySQL.** The JSON fixtures are written the way MySQL
+  returns a `json` column, with a space after every colon
+  (`{"origin": 1, "reviewed_by": 0}`); MariaDB and SQLite hand the string back as
+  stored, and `assertCSVDataSet` compares raw strings, so a couple of dozen tests fail
+  on those engines for that reason alone. Worth running anyway: SQLite accepts a double-quoted
+  unknown column as a string literal instead of erroring, which is exactly what hid
+  the missing table guard in `AiMetaDataHandlerHook` from every SQLite run.
 - **CI (`.github/workflows/ci.yml`) runs the matrix against all three TYPO3 versions**,
   and phpstan needs a *separate* config per pre-v14 version: `Build/phpstan13.neon` /
   `Build/phpstan12.neon` plus their own baselines - `Classes/Legacy/*`'s runtime guard
@@ -453,6 +543,31 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
   `typo3/cms-workspaces` needs to be present in `require-dev`.
 - `coreExtensionsToLoad` also needs `'filelist'` for any test that boots the full
   extension (composer-required at dev-time even though not at runtime - see above).
+- Testing the overview module end to end (`AiLabelOverviewControllerTest`): call
+  `handleRequest()` on the controller from the container with a `ServerRequest` carrying
+  `applicationType`, `normalizedParams` and a `route` attribute. That route needs
+  `['packageName' => 'b13/ai-label']` as its options - `BackendViewFactory` builds the
+  template search paths from it alone, so without it Fluid only ever looks inside
+  `EXT:backend` and every render dies with `InvalidTemplateResourceException`. Assertions
+  run against the rendered body, so expected label text is HTML-escaped (`&quot;`,
+  `&amp;` inside hrefs). **One render per test**: `ModuleTemplate` pulls
+  `DocHeaderComponent` from the container, so a second `handleRequest()` in the same
+  process still finds the first one's `ShortcutButton` in the button bar and trips
+  core's "manually adding ShortcutButton" deprecation, which `failOnDeprecation="true"`
+  turns into a failure. Production renders a module once per request, so this is a test
+  artifact only.
+- Testing an integrator's `ApplicableTablesEvent` override needs a real fixture
+  extension, not a runtime listener: `AddAiMetaFieldsToTca` runs at TCA-build time and
+  the DB schema is derived from it, so a listener registered inside a test method is far
+  too late - the column already exists.
+  `Tests/Functional/Fixtures/Extensions/ai_label_no_pages` drops `pages`, and
+  `MarkFlaggedPageInLayoutModuleWithoutPagesTest` asserts the column genuinely is not
+  there. Two traps: its namespace must be listed in the **root** `composer.json`'s
+  `autoload-dev` (Symfony's `resource: '../Classes/*'` resolves classes through the root
+  autoloader and fails the container build otherwise), and on v14 the fixture must be
+  composer-only - an `ext_emconf.php` triggers a deprecation that `failOnDeprecation`
+  turns into a failure, so its `composer.json` carries `version` plus
+  `extra.typo3/cms.Package.providesPackages` (see `PackageManager::isComposerOnlyCapable()`).
 - Testing DataProcessors: just instantiate directly and call `->process($cObj, ...)` -
   no Fluid needed, see `AiLabelProcessorTest`.
 - Testing ViewHelpers: needs an actual Fluid render pass to be meaningful (namespace
@@ -529,7 +644,15 @@ can be require-dev) or an `implements`/`extends`/eagerly-instantiated dependency
    */
   ```
   on every PHP file, including tests.
-- English comments only, and only where the *why* isn't obvious from the code.
+- English comments only, and as short as possible. The readers are TYPO3 experts: never
+  describe what a core API does, how DataHandler/FormEngine/FAL work, or what the code
+  plainly says. No background, no bug histories, no measurements, no rejected-alternative
+  essays. Comment only the non-obvious thing about *this* functionality - typically a
+  constraint that would otherwise be refactored away (e.g. "an explicit write of the column
+  wins", "the mounts are the entry point, the permission clause alone lets outside pages
+  pass"). One or two lines is the norm, a docblock of five is already long.
+  Note that comments written before 2026-09 are far more verbose than this; match the rule,
+  not the surrounding style, and shorten what you touch.
 - No double-quoted string interpolation (`"$table:$id"`) - use concatenation
   (`$table . ':' . $id`).
 - Prefer the domain object's own accessors over re-deriving booleans/values inline

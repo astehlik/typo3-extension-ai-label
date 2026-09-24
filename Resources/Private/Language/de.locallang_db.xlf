@@ -36,8 +36,8 @@
                 <target>Geprüft</target>
             </trans-unit>
             <trans-unit id="field.reviewed.description">
-                <source>Tick this once a person has genuinely read the content and checked that it is accurate - a quick glance or a spell-check is not enough. By ticking it you take responsibility for what is published. For text, the law accepts such a review instead of a public label; for images, audio and video it does not, so those stay labelled either way. This extension keeps showing the marker for every flagged record regardless, which is always the safe option. Editing a flagged record later clears the review, so the content gets checked again.</source>
-                <target>Setzen Sie diesen Haken erst, wenn eine Person den Inhalt wirklich gelesen und auf Richtigkeit geprüft hat – ein kurzer Blick oder eine Rechtschreibprüfung genügt nicht. Mit dem Haken übernehmen Sie die Verantwortung für das, was veröffentlicht wird. Bei Texten akzeptiert das Gesetz eine solche Prüfung anstelle einer öffentlichen Kennzeichnung, bei Bildern, Audio und Video hingegen nicht – diese bleiben in jedem Fall gekennzeichnet. Diese Extension zeigt die Markierung ohnehin bei jedem gekennzeichneten Datensatz an, was immer der sichere Weg ist. Wird ein gekennzeichneter Datensatz später bearbeitet, wird die Prüfung zurückgesetzt, damit der Inhalt erneut geprüft wird.</target>
+                <source>Tick this once a person has genuinely read the content and checked that it is accurate - a quick glance or a spell-check is not enough. By ticking it you take responsibility for what is published. For text, the law accepts such a review instead of a public label; for images, audio and video it does not, so those stay labelled either way. Editing a flagged record later clears the review, so the content gets checked again.</source>
+                <target>Setzen Sie diesen Haken erst, wenn eine Person den Inhalt wirklich gelesen und auf Richtigkeit geprüft hat – ein kurzer Blick oder eine Rechtschreibprüfung genügt nicht. Mit dem Haken übernehmen Sie die Verantwortung für das, was veröffentlicht wird. Bei Texten akzeptiert das Gesetz eine solche Prüfung anstelle einer öffentlichen Kennzeichnung, bei Bildern, Audio und Video hingegen nicht – diese bleiben in jedem Fall gekennzeichnet. Wird ein gekennzeichneter Datensatz später bearbeitet, wird die Prüfung zurückgesetzt, damit der Inhalt erneut geprüft wird.</target>
             </trans-unit>
             <trans-unit id="notice.reviewRequired">
                 <source>Not reviewed</source>
@@ -66,6 +66,10 @@
             <trans-unit id="config.watermarkColor">
                 <source>Default color of the badge burned into the image ("Burned into the image" mode only). Can be overridden per file. Black matches the previous, fixed behaviour.</source>
                 <target>Standardfarbe der in das Bild eingebrannten Markierung (nur im Modus „In das Bild eingebrannt“). Kann pro Datei überschrieben werden. „Schwarz“ entspricht dem bisherigen, festen Verhalten.</target>
+            </trans-unit>
+            <trans-unit id="config.watermarkWidth">
+                <source>Default width of the badge burned into the image ("Burned into the image" mode only), never enlarged beyond it. Can be overridden per file. 160px matches the previous, fixed behaviour.</source>
+                <target>Standardbreite der in das Bild eingebrannten Markierung (nur im Modus „In das Bild eingebrannt“), die nie darüber hinaus vergrößert wird. Kann pro Datei überschrieben werden. 160px entspricht dem bisherigen, festen Verhalten.</target>
             </trans-unit>
             <trans-unit id="field.watermark_position">
                 <source>Watermark position</source>
@@ -114,6 +118,26 @@
             <trans-unit id="field.watermark_color.white">
                 <source>White</source>
                 <target>Weiß</target>
+            </trans-unit>
+            <trans-unit id="field.watermark_width">
+                <source>Watermark width</source>
+                <target>Breite des Wasserzeichens</target>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.description">
+                <source>Overrides the global default width for the badge burned into this file's processed images. Leave as "Inherit global setting" to use the site-wide default. (Note: On smaller images, the badge shrinks below this width.)</source>
+                <target>Überschreibt die globale Standardbreite für die Markierung, die in die bearbeiteten Bilder dieser Datei eingebrannt wird. Belassen Sie es bei „Globale Einstellung übernehmen“, um den seitenweiten Standard zu verwenden. (Hinweis: Auf kleineren Bildern wird die Markierung schmaler als diese Breite.)</target>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.inherit">
+                <source>Inherit global setting</source>
+                <target>Globale Einstellung übernehmen</target>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.regular">
+                <source>Regular (160px)</source>
+                <target>Normal (160px)</target>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.small">
+                <source>Small (80px)</source>
+                <target>Klein (80px)</target>
             </trans-unit>
             <trans-unit id="palette.aiLabelWatermark.description">
                 <source>Only relevant when "Burned into the image" is the active AI marker mode. Overrides the site-wide default for this file only.</source>

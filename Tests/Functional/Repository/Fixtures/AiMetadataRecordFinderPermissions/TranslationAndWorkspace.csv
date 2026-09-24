@@ -1,0 +1,8 @@
+sys_workspace
+,uid,pid,title,adminusers,members
+,1,0,"Draft",1,2
+
+pages
+,uid,pid,doktype,title,sys_language_uid,l10n_parent,t3ver_wsid,t3ver_state,t3ver_oid,perms_userid,perms_groupid,perms_user,perms_group,perms_everybody,tx_ailabel_metadata
+,40,1,1,"Child DE",1,4,0,0,0,1,1,31,31,1,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"
+,41,1,1,"New in the workspace",0,0,1,1,0,1,1,31,31,1,"{""origin"": 1, ""reviewed_by"": 0, ""reviewed_timestamp"": 0}"

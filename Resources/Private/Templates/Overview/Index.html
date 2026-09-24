@@ -39,10 +39,22 @@
                         title="{f:translate(key: 'LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.noEntries.title')}"
                         state="{severityInfo.value}"
                     >
-                        <p><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.noEntries.filtered" /></p>
-                        <a href="{f:be.uri(route: 'web_ai_label_overview')}" class="btn btn-default">
+                        <f:if condition="{pageId} > 0">
+                            <f:then>
+                                <p><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.noEntries.filtered.inPageTree" arguments="{0: scopeLabel}" /></p>
+                            </f:then>
+                            <f:else>
+                                <p><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.noEntries.filtered" /></p>
+                            </f:else>
+                        </f:if>
+                        <a href="{f:be.uri(route: 'web_ai_label_overview', parameters: '{id: pageId}')}" class="btn btn-default">
                             <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:filter.reset" />
                         </a>
+                        <f:if condition="{pageId} > 0">
+                            <a href="{unscopedUrl}" class="btn btn-default">
+                                <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.scope.showAll" />
+                            </a>
+                        </f:if>
                     </f:be.infobox>
                 </f:else>
             </f:if>
@@ -52,16 +64,22 @@
                 title="{f:translate(key: 'LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.empty.title')}"
                 state="{severityInfo.value}"
             >
-                <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.empty.message" />
+                <f:if condition="{pageId} > 0">
+                    <f:then>
+                        <p><f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.empty.message.inPageTree" arguments="{0: scopeLabel}" /></p>
+                        <a href="{unscopedUrl}" class="btn btn-default">
+                            <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.scope.showAll" />
+                        </a>
+                    </f:then>
+                    <f:else>
+                        <f:translate key="LLL:EXT:ai_label/Resources/Private/Language/locallang_mod.xlf:overview.empty.message" />
+                    </f:else>
+                </f:if>
             </f:be.infobox>
         </f:else>
     </f:if>
 
-    <div id="b13_loves_typo3">
-        <a href="https://b13.com?utm_source=web&utm_medium=dashboard&utm_campaign=ai_label&utm_id=ai_label" target="_blank" rel="external">
-            made with ❤ by b13
-        </a>
-    </div>
+    <f:render partial="ProductFooter" />
 </f:section>
 
 </html>

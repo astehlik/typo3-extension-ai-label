@@ -12,13 +12,16 @@ namespace B13\AiLabel\Hooks;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Enum\AiOrigin;
 use B13\AiLabel\Domain\Model\AiMetadata;
-use B13\AiLabel\Service\AiLabelApi;
+use B13\AiLabel\Imaging\ProcessedFileInvalidator;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
+use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 // Folds tx_ailabel_origin / tx_ailabel_reviewed into the tx_ailabel_metadata JSON
 // column (a real type=json TCA column added by AddAiMetaFieldsToTca, never part of
@@ -34,13 +37,11 @@ use TYPO3\CMS\Core\DataHandling\DataHandler;
 // untouched) does NOT count as "reviewed wins" - content changing after a record
 // was already reviewed must still reset it.
 //
-// processDatamap_postProcessFieldArray() dispatches on $status into two separate
-// methods, since the two cases barely overlap: processUpdatedRecord() persists
-// through AiLabelApi::aiMetadataUpdate() (see that class for why - permissions,
-// sys_history) and has to reconcile the incoming value against whatever is already
-// stored (the review-reset/"reviewed wins" logic above). processNewRecord() has no
-// existing row to fetch or reconcile against and can't go through AiLabelApi (the
-// row doesn't exist yet to target), so it just writes $fieldArray directly.
+// processUpdatedRecord() reconciles against what is stored, processNewRecord() has
+// nothing to reconcile. Both write into $fieldArray, so the value is part of the
+// insert/update DataHandler already performs. AiLabelApi::aiMetadataUpdate() would
+// start a second DataHandler inside this one; it stays the entry point for callers
+// outside a running DataHandler.
 #[Autoconfigure(public: true)]
 final class AiMetaDataHandlerHook
 {
@@ -51,9 +52,15 @@ final class AiMetaDataHandlerHook
     /** @var array<string, AiMetadata> */
     private array $pendingValues = [];
 
+    // Metadata changes for sys_history, keyed by "$table:$id". Core builds its payload
+    // before this hook adds the column, so it would never show up in the history.
+    /** @var array<string, array{oldRecord: array<string, string>, newRecord: array<string, string>}> */
+    private array $pendingHistory = [];
+
     public function __construct(
         private readonly Context $context,
-        private readonly AiLabelApi $aiLabelApi,
+        private readonly ProcessedFileInvalidator $processedFileInvalidator,
+        private readonly ApplicableTablesProvider $applicableTablesProvider,
     ) {
     }
 
@@ -79,8 +86,15 @@ final class AiMetaDataHandlerHook
             return;
         }
 
+        // Stripping the fields still has to happen for any table, or DataHandler's own
+        // compare fatals on them - only the stashing is pointless off the applicable set.
+        if (!$this->applicableTablesProvider->isTableApplicable($table)) {
+            unset($incomingFieldArray['tx_ailabel_origin'], $incomingFieldArray['tx_ailabel_reviewed']);
+            return;
+        }
+
         $origin = AiOrigin::tryFrom((int)($incomingFieldArray['tx_ailabel_origin'] ?? AiOrigin::Human->value)) ?? AiOrigin::Human;
-        $this->pendingValues[$table . ':' . $id] = (new AiMetadata())
+        $this->pendingValues[$this->stateKey($dataHandler, $table, $id)] = (new AiMetadata())
             ->withOrigin($origin)
             ->withReviewedBy(($incomingFieldArray['tx_ailabel_reviewed'] ?? false) ? 1 : 0);
         unset($incomingFieldArray['tx_ailabel_origin'], $incomingFieldArray['tx_ailabel_reviewed']);
@@ -93,23 +107,85 @@ final class AiMetaDataHandlerHook
         array &$fieldArray,
         DataHandler $dataHandler
     ): void {
-        $key = $table . ':' . $id;
-        if (!isset($this->pendingValues[$key])) {
+        // The update path below runs even when this save carries no ai fields, so
+        // without this it would read tx_ailabel_metadata on every saved table,
+        // including those without that column.
+        if (!$this->applicableTablesProvider->isTableApplicable($table)) {
             return;
         }
-        $pendingAiMetadata = $this->pendingValues[$key];
-        unset($this->pendingValues[$key]);
 
-        // New records can't go through AiLabelApi (the row doesn't exist yet to
-        // target), and never have an existing/previously-reviewed state to reconcile
+        $pendingAiMetadata = $this->takePendingValue($table, $id, $dataHandler);
+
+        // New records never have an existing/previously-reviewed state to reconcile
         // with - see processNewRecord(). Everything else (the review-reset/"reviewed
         // wins" logic) only makes sense for an update, see processUpdatedRecord().
         if ($status !== 'update') {
-            $this->processNewRecord($pendingAiMetadata, $fieldArray, $dataHandler);
+            if ($pendingAiMetadata !== null) {
+                $this->processNewRecord($pendingAiMetadata, $fieldArray, $dataHandler);
+            }
             return;
         }
 
         $this->processUpdatedRecord($pendingAiMetadata, $table, (int)$id, $fieldArray, $dataHandler);
+    }
+
+    /**
+     * Core can skip a record between the two hooks (a permission denial, a failed
+     * versioning), so its entry would otherwise be picked up by a later save of the same
+     * record. Only this run's entries are dropped: the container hands this listener out
+     * shared, so a nested DataHandler must not clear what the outer one is still using.
+     */
+    public function processDatamap_afterAllOperations(DataHandler $dataHandler): void
+    {
+        $prefix = spl_object_id($dataHandler) . ':';
+        foreach (array_keys($this->pendingValues) as $key) {
+            if (str_starts_with($key, $prefix)) {
+                unset($this->pendingValues[$key]);
+            }
+        }
+        foreach (array_keys($this->pendingHistory) as $key) {
+            if (str_starts_with($key, $prefix)) {
+                unset($this->pendingHistory[$key]);
+            }
+        }
+    }
+
+    private function stateKey(DataHandler $dataHandler, string $table, int|string $id): string
+    {
+        return spl_object_id($dataHandler) . ':' . $table . ':' . $id;
+    }
+
+    /**
+     * In a workspace the pre hook is called with the live uid and the post hook with
+     * the version's, so the stashed value is mapped back through t3ver_oid.
+     */
+    private function takePendingValue(string $table, int|string $id, DataHandler $dataHandler): ?AiMetadata
+    {
+        $key = $this->stateKey($dataHandler, $table, $id);
+        if (!isset($this->pendingValues[$key])) {
+            $liveId = $this->resolveLiveId($table, (int)$id);
+            if ($liveId === 0) {
+                return null;
+            }
+            $key = $this->stateKey($dataHandler, $table, $liveId);
+            if (!isset($this->pendingValues[$key])) {
+                return null;
+            }
+        }
+
+        $pendingAiMetadata = $this->pendingValues[$key];
+        unset($this->pendingValues[$key]);
+
+        return $pendingAiMetadata;
+    }
+
+    private function resolveLiveId(string $table, int $id): int
+    {
+        if (empty($GLOBALS['TCA'][$table]['ctrl']['versioningWS'])) {
+            return 0;
+        }
+
+        return (int)(BackendUtility::getRecord($table, $id, 't3ver_oid')['t3ver_oid'] ?? 0);
     }
 
     private function processNewRecord(AiMetadata $pendingAiMetadata, array &$fieldArray, DataHandler $dataHandler): void
@@ -129,18 +205,41 @@ final class AiMetaDataHandlerHook
         $fieldArray['tx_ailabel_metadata'] = $finalAiMetadata->toArray();
     }
 
-    private function processUpdatedRecord(AiMetadata $pendingAiMetadata, string $table, int $id, array $fieldArray, DataHandler $dataHandler): void
+    /**
+     * @param array<string, int> $old
+     * @param array<string, int> $new
+     */
+    private function rememberForHistory(DataHandler $dataHandler, string $table, int $id, array $old, array $new): void
     {
-        $existingAiMetadata = AiMetadata::fromJsonString(BackendUtility::getRecord($table, $id, 'tx_ailabel_metadata')['tx_ailabel_metadata'] ?? null);
+        $this->pendingHistory[$this->stateKey($dataHandler, $table, $id)] = [
+            'oldRecord' => ['tx_ailabel_metadata' => (string)json_encode($old)],
+            'newRecord' => ['tx_ailabel_metadata' => (string)json_encode($new)],
+        ];
+    }
 
-        if (!$pendingAiMetadata->isFlagged() && !$existingAiMetadata->isFlagged() && !$existingAiMetadata->isReviewed()) {
-            // Never flagged, and nothing stored yet - nothing to persist.
+    /**
+     * $pendingAiMetadata is null for saves carrying no ai fields, e.g. an import or a
+     * scheduler task. Flag and reviewer stay as stored, the review reset still applies.
+     */
+    private function processUpdatedRecord(?AiMetadata $pendingAiMetadata, string $table, int $id, array &$fieldArray, DataHandler $dataHandler): void
+    {
+        $aiFieldsSubmitted = $pendingAiMetadata !== null;
+        if (!$aiFieldsSubmitted && array_key_exists('tx_ailabel_metadata', $fieldArray)) {
+            // An explicit write of the column wins, e.g. from AiLabelApi.
             return;
         }
 
+        $existingAiMetadata = AiMetadata::fromJsonString(BackendUtility::getRecord($table, $id, 'tx_ailabel_metadata')['tx_ailabel_metadata'] ?? null);
+        $pendingAiMetadata ??= $existingAiMetadata;
+
         if (!$pendingAiMetadata->isFlagged()) {
+            if (!$aiFieldsSubmitted || (!$existingAiMetadata->isFlagged() && !$existingAiMetadata->isReviewed())) {
+                // Not flagged and never was - or nothing in this save says otherwise.
+                return;
+            }
             // Unflagged now: nothing worth tracking anymore.
-            $this->aiLabelApi->aiMetadataUpdate($table, $id, null, $dataHandler->BE_USER);
+            $fieldArray['tx_ailabel_metadata'] = [];
+            $this->rememberForHistory($dataHandler, $table, $id, $existingAiMetadata->toArray(), []);
             return;
         }
 
@@ -157,14 +256,21 @@ final class AiMetaDataHandlerHook
         $contentChanged = $this->hasRelevantContentChange($table, $fieldArray);
         $needsReviewReset = $contentChanged && $existingAiMetadata->isReviewed() && !$reviewedJustTicked;
 
+        // Only an actual reviewing decision moves the reviewer: a checkbox that merely
+        // stayed ticked is not one, so the review keeps the user who gave it.
         $beUserId = (int)($dataHandler->BE_USER->user['uid'] ?? 0);
-        $reviewedBy = $needsReviewReset ? 0 : ($pendingAiMetadata->isReviewed() ? $beUserId : 0);
-
-        // reviewed_timestamp only moves when reviewed actually flips from unreviewed
-        // to reviewed in this save; it's cleared again once a reset makes it
-        // unreviewed, and otherwise just keeps whatever was stored before.
-        $reviewedTimestamp = match (true) {
+        $reviewedBy = match (true) {
             $needsReviewReset => 0,
+            !$aiFieldsSubmitted => $existingAiMetadata->getReviewedBy(),
+            !$pendingAiMetadata->isReviewed() => 0,
+            $reviewedJustTicked => $beUserId,
+            default => $existingAiMetadata->getReviewedBy(),
+        };
+
+        // Derived from the reviewer, never decided separately: the two always describe
+        // the same review, so an unreviewed record cannot keep an old timestamp.
+        $reviewedTimestamp = match (true) {
+            $reviewedBy === 0 => 0,
             $reviewedJustTicked => (int)$this->context->getPropertyFromAspect('date', 'timestamp'),
             default => $existingAiMetadata->getReviewedTimestamp(),
         };
@@ -173,7 +279,46 @@ final class AiMetaDataHandlerHook
             ->withReviewedBy($reviewedBy)
             ->withReviewedTimestamp($reviewedTimestamp);
 
-        $this->aiLabelApi->aiMetadataUpdate($table, $id, $finalAiMetadata, $dataHandler->BE_USER);
+        if ($finalAiMetadata->toArray() === $existingAiMetadata->toArray()) {
+            // Nothing moved, so leave the column and the history alone.
+            return;
+        }
+
+        $fieldArray['tx_ailabel_metadata'] = $finalAiMetadata->toArray();
+        $this->rememberForHistory($dataHandler, $table, $id, $existingAiMetadata->toArray(), $finalAiMetadata->toArray());
+    }
+
+    /**
+     * Writes the sys_history entry for the metadata change and flushes processed files
+     * carrying an outdated baked marker. New records need neither.
+     */
+    public function processDatamap_afterDatabaseOperations(
+        string $status,
+        string $table,
+        int|string $id,
+        array $fieldArray,
+        DataHandler $dataHandler
+    ): void {
+        $key = $this->stateKey($dataHandler, $table, $id);
+        $history = $this->pendingHistory[$key] ?? null;
+        unset($this->pendingHistory[$key]);
+        if ($history === null || $status !== 'update') {
+            return;
+        }
+
+        $uid = (int)$id;
+        GeneralUtility::makeInstance(
+            RecordHistoryStore::class,
+            RecordHistoryStore::USER_BACKEND,
+            (int)($dataHandler->BE_USER->user['uid'] ?? 0),
+            $dataHandler->BE_USER->getOriginalUserIdWhenInSwitchUserMode(),
+            (int)$this->context->getPropertyFromAspect('date', 'timestamp'),
+            (int)$dataHandler->BE_USER->workspace
+        )->modifyRecord($table, $uid, $history, $dataHandler->getCorrelationId()?->withAspects('ai_label'));
+
+        if ($table === 'sys_file_metadata') {
+            $this->processedFileInvalidator->invalidateForFileMetadata($uid);
+        }
     }
 
     /**
@@ -199,6 +344,11 @@ final class AiMetaDataHandlerHook
         $tcaColumns = $GLOBALS['TCA'][$table]['columns'] ?? [];
 
         $ignoredFields = array_filter([
+            // Our own bookkeeping column, never editorial content.
+            'tx_ailabel_metadata',
+            // Core puts this in $fieldArray before the compare, so a version parked at
+            // any stage but 0 always looks changed.
+            't3ver_stage',
             $tcaCtrl['tstamp'] ?? null,
             $tcaCtrl['transOrigDiffSourceField'] ?? null,
         ]);
