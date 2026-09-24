@@ -28,7 +28,7 @@
                 <source>Reviewed</source>
             </trans-unit>
             <trans-unit id="field.reviewed.description">
-                <source>Tick this once a person has genuinely read the content and checked that it is accurate - a quick glance or a spell-check is not enough. By ticking it you take responsibility for what is published. For text, the law accepts such a review instead of a public label; for images, audio and video it does not, so those stay labelled either way. This extension keeps showing the marker for every flagged record regardless, which is always the safe option. Editing a flagged record later clears the review, so the content gets checked again.</source>
+                <source>Tick this once a person has genuinely read the content and checked that it is accurate - a quick glance or a spell-check is not enough. By ticking it you take responsibility for what is published. For text, the law accepts such a review instead of a public label; for images, audio and video it does not, so those stay labelled either way. Editing a flagged record later clears the review, so the content gets checked again.</source>
             </trans-unit>
             <trans-unit id="notice.reviewRequired">
                 <source>Not reviewed</source>
@@ -50,6 +50,9 @@
             </trans-unit>
             <trans-unit id="config.watermarkColor">
                 <source>Default color of the badge burned into the image ("Burned into the image" mode only). Can be overridden per file. Black matches the previous, fixed behaviour.</source>
+            </trans-unit>
+            <trans-unit id="config.watermarkWidth">
+                <source>Default width of the badge burned into the image ("Burned into the image" mode only), never enlarged beyond it. Can be overridden per file. 160px matches the previous, fixed behaviour.</source>
             </trans-unit>
             <trans-unit id="field.watermark_position">
                 <source>Watermark position</source>
@@ -86,6 +89,21 @@
             </trans-unit>
             <trans-unit id="field.watermark_color.white">
                 <source>White</source>
+            </trans-unit>
+            <trans-unit id="field.watermark_width">
+                <source>Watermark width</source>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.description">
+                <source>Overrides the global default width for the badge burned into this file's processed images. Leave as "Inherit global setting" to use the site-wide default. (Note: On smaller images, the badge shrinks below this width.)</source>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.inherit">
+                <source>Inherit global setting</source>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.regular">
+                <source>Regular (160px)</source>
+            </trans-unit>
+            <trans-unit id="field.watermark_width.small">
+                <source>Small (80px)</source>
             </trans-unit>
             <trans-unit id="palette.aiLabelWatermark.description">
                 <source>Only relevant when "Burned into the image" is the active AI marker mode. Overrides the site-wide default for this file only.</source>

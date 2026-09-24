@@ -12,9 +12,14 @@ namespace B13\AiLabel\Imaging;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Domain\Model\AiMetadata;
+use B13\AiLabel\Event\BeforeProcessedFileInvalidatedEvent;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
+use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Resource\Exception\FileDoesNotExistException;
+use TYPO3\CMS\Core\Resource\ProcessedFile;
 use TYPO3\CMS\Core\Resource\ProcessedFileRepository;
 use TYPO3\CMS\Core\Resource\ResourceFactory;
 
@@ -33,6 +38,7 @@ final class ProcessedFileInvalidator
         private readonly ProcessedFileRepository $processedFileRepository,
         private readonly ResourceFactory $resourceFactory,
         private readonly ConnectionPool $connectionPool,
+        private readonly EventDispatcherInterface $eventDispatcher,
     ) {
     }
 
@@ -57,11 +63,21 @@ final class ProcessedFileInvalidator
 
         foreach ($this->processedFileRepository->findAllByOriginalFile($file) as $processedFile) {
             // A processed file that "uses the original file" carries the original's own
-            // identifier - deleting it would delete the editor's asset.
+            // identifier - deleting it would delete the editor's asset. Its row still has
+            // to go: FAL stores one whenever an image needs no scaling at all (a hero
+            // rendered at its own width), and while it is there AbstractTask::
+            // fileNeedsProcessing() stays false, so AiWatermarkProcessor never runs and
+            // the file keeps being served unmarked.
+            //
+            // No BeforeProcessedFileInvalidatedEvent for these, on purpose: nothing is
+            // deleted from disk, and getPublicUrl() would hand a listener the *original's*
+            // URL - so "purge that variant" would purge the editor's own file.
             if ($processedFile->usesOriginalFile()) {
+                $this->deleteProcessedFileRecord($processedFile);
                 continue;
             }
             if ($processedFile->exists()) {
+                $this->eventDispatcher->dispatch(new BeforeProcessedFileInvalidatedEvent($processedFile->getPublicUrl()));
                 $processedFile->delete(true);
             }
         }
@@ -69,5 +85,67 @@ final class ProcessedFileInvalidator
         $this->logger->debug('Flushed processed files for sys_file {file} after an AI flag change.', [
             'file' => (int)$fileUid,
         ]);
+    }
+
+    /**
+     * Deletes the record by hand rather than through ProcessedFileRepository::remove():
+     * that method only arrived in v14, and v13.4 offers nothing but removeAll(), which
+     * would throw away every processed file in the installation.
+     */
+    private function deleteProcessedFileRecord(ProcessedFile $processedFile): void
+    {
+        if (!$processedFile->isPersisted()) {
+            return;
+        }
+        $this->connectionPool
+            ->getConnectionForTable('sys_file_processedfile')
+            ->delete('sys_file_processedfile', ['uid' => (int)$processedFile->getUid()]);
+    }
+
+    /**
+     * @return int the number of files whose variants were flushed
+     */
+    public function invalidateForAllFlaggedFiles(): int
+    {
+        // QueryBuilder rather than a raw statement, since this table is ctrl.versioningWS,
+        // so a plain "WHERE tx_ailabel_metadata IS NOT NULL" also returns workspace drafts
+        // and delete placeholders. Those carry the same "file" as their live counterpart,
+        // so they would not break anything, they would just flush the same file again and
+        // inflate the number this method reports.
+        $queryBuilder = $this->connectionPool->getConnectionForTable('sys_file_metadata')->createQueryBuilder();
+        $queryBuilder->getRestrictions()->removeAll();
+        $rows = $queryBuilder
+            ->select('uid', 'file', 'tx_ailabel_metadata')
+            ->from('sys_file_metadata')
+            ->where(
+                $queryBuilder->expr()->isNotNull('tx_ailabel_metadata'),
+                $queryBuilder->expr()->eq('t3ver_wsid', $queryBuilder->createNamedParameter(0, Connection::PARAM_INT))
+            )
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $flushedFiles = [];
+        foreach ($rows as $row) {
+            // IS NOT NULL is only a cheap pre-filter: writes through AiLabelApi leave
+            // {"origin": 0, ...} behind rather than SQL NULL, so the decision is
+            // isFlagged(), not the column being set.
+            $value = $row['tx_ailabel_metadata'] ?? null;
+            if (!AiMetadata::fromJsonString(is_string($value) ? $value : null)->isFlagged()) {
+                continue;
+            }
+            // Translations are separate metadata records pointing at the same sys_file,
+            // and processed files belong to the file, not to a language, so a file is
+            // flushed once even when several of its metadata records are flagged. Which
+            // of them carried the flag doesn't matter either: they all resolve to these
+            // same variants.
+            $fileUid = (int)($row['file'] ?? 0);
+            if ($fileUid <= 0 || isset($flushedFiles[$fileUid])) {
+                continue;
+            }
+            $flushedFiles[$fileUid] = true;
+            $this->invalidateForFileMetadata((int)$row['uid']);
+        }
+
+        return count($flushedFiles);
     }
 }

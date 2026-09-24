@@ -14,6 +14,7 @@ namespace B13\AiLabel\Tests\Functional\Frontend;
 
 use B13\AiLabel\Tests\Functional\CreatesFluidViewTrait;
 use PHPUnit\Framework\Attributes\Test;
+use TYPO3\CMS\Core\Resource\FileReference;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
 /**
@@ -54,6 +55,24 @@ final class AiLabelPartialTest extends FunctionalTestCase
         return trim($view->render('RenderAiLabel'));
     }
 
+    /**
+     * The partial's other entry point: called with a FAL "file" instead of a record
+     * (that is what Media/Rendering/Image does in "overlay" mode). Same partial, but a
+     * deliberately different review rule - see the reviewed-file test below.
+     */
+    private function renderPartialForFile(int $fileUid): string
+    {
+        $view = $this->createFluidView(
+            [__DIR__ . '/Fixtures/Templates/'],
+            [__DIR__ . '/../../../Resources/Private/Partials/'],
+        );
+        // No file on disk needed: the partial only reads metadata properties, and
+        // getProperty() never touches the filesystem.
+        $view->assign('file', new FileReference(['uid_local' => $fileUid]));
+
+        return trim($view->render('RenderAiLabelForFile'));
+    }
+
     #[Test]
     public function rendersGeneratedIconWithDefaultVariant(): void
     {
@@ -89,5 +108,55 @@ final class AiLabelPartialTest extends FunctionalTestCase
         $output = $this->renderPartial(['tx_ailabel_metadata' => null]);
 
         self::assertSame('', $output);
+    }
+
+    /**
+     * Text is the one case the EU AI Act lets a genuine human review substitute
+     * for the public label (Article 50, text exception) - a reviewed content
+     * element/page must stop rendering the marker.
+     */
+    #[Test]
+    public function reviewedRecordRendersNothing(): void
+    {
+        $output = $this->renderPartial(['tx_ailabel_metadata' => '{"origin":1,"reviewed_by":1,"reviewed_timestamp":1000}']);
+
+        self::assertSame('', $output);
+    }
+
+    #[Test]
+    public function flaggedFileRendersMarker(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/OverlayImages.csv');
+
+        $output = $this->renderPartialForFile(1);
+
+        self::assertStringContainsString('class="b_ai-label"', $output);
+        self::assertStringContainsString('ai_generated_black.svg', $output);
+    }
+
+    /**
+     * The counterpart to reviewedRecordRendersNothing(), and the rule this partial's
+     * "file" branch exists for: unlike text, a human review never lifts the disclosure
+     * duty for a flagged file (EU AI Act Article 50(4)), so the marker has to stay.
+     * "baked" mode never consulted the review state either - AiWatermark keys on the
+     * origin alone - so this keeps both image marker modes telling the same story.
+     */
+    #[Test]
+    public function flaggedAndReviewedFileStillRendersMarker(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/OverlayImages.csv');
+
+        $output = $this->renderPartialForFile(3);
+
+        self::assertStringContainsString('class="b_ai-label"', $output);
+        self::assertStringContainsString('ai_generated_black.svg', $output);
+    }
+
+    #[Test]
+    public function unflaggedFileRendersNothing(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/OverlayImages.csv');
+
+        self::assertSame('', $this->renderPartialForFile(2));
     }
 }

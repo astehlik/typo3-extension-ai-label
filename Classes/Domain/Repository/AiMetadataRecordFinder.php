@@ -12,17 +12,21 @@ namespace B13\AiLabel\Domain\Repository;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Backend\PageTreeScopeResolver;
 use B13\AiLabel\Configuration\ApplicableTablesProvider;
 use B13\AiLabel\Domain\Model\AiMetadata;
 use B13\AiLabel\Event\AfterRecordIsBuiltEvent;
+use B13\AiLabel\Service\AiLabelAccessChecker;
 use B13\AiLabel\Service\AiMetadataBadgeFactory;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use TYPO3\CMS\Backend\History\RecordHistory;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\QueryBuilder;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Information\Typo3Version;
@@ -31,8 +35,10 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 // Collects records across the applicable tables whose tx_ailabel_metadata marks them
 // as flagged (AI-created or AI-modified). Not an Extbase repository, no persistence layer in
-// use here - just a plain query helper, used by the overview module (site-wide)
-// and MarkFlaggedPageInLayoutModule (single page, tt_content only).
+// use here - just a plain query helper, used by the overview module (site-wide, or
+// scoped to a page plus its recursive subpages once a page is selected in its
+// navigation component - see PageTreeScopeResolver) and MarkFlaggedPageInLayoutModule
+// (single page, tt_content only, never recursive).
 //
 // Workspace-aware: only ever shows what the current backend user would actually
 // see for their active workspace - the live version (or its workspace-overlaid
@@ -40,8 +46,17 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 // this workspace. Never leaks another workspace's drafts. BackendUtility::
 // workspaceOL() itself already no-ops entirely if EXT:workspaces isn't loaded or
 // the workspace is live (id 0), so this stays a no-op extra query in that case.
+//
+// Also permission-aware for non-admin backend users, via AiLabelAccessChecker:
+// records the user isn't allowed to read (page outside their DB mount / not
+// PAGE_SHOW-able, sys_file_metadata whose file sits outside their FS mount or file
+// permissions) never make it into the result at all - each remaining record carries
+// an 'editable' flag callers use to decide whether to link it for editing.
 final class AiMetadataRecordFinder
 {
+    /** @var list<int>|null Resolved once, the finder walks every applicable table. */
+    private ?array $accessiblePageIds = null;
+
     public function __construct(
         private readonly ConnectionPool $connectionPool,
         private readonly ApplicableTablesProvider $applicableTablesProvider,
@@ -50,15 +65,25 @@ final class AiMetadataRecordFinder
         private readonly IconFactory $iconFactory,
         private readonly Typo3Version $typo3Version,
         private readonly EventDispatcherInterface $eventDispatcher,
+        private readonly AiLabelAccessChecker $accessChecker,
+        private readonly PageTreeScopeResolver $pageTreeScopeResolver,
     ) {
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> */
-    public function findFlaggedRecords(): array
+    /**
+     * @param list<int>|null $pageIds Restricts the result to a page-tree scope
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
+     */
+    public function findFlaggedRecords(?array $pageIds = null): array
     {
+        if ($pageIds === []) {
+            // An empty scope is not the same as no scope - nothing can match it.
+            return [];
+        }
+
         $records = [];
         foreach ($this->applicableTablesProvider->getApplicableTables() as $table) {
-            $records = array_merge($records, $this->findFlaggedRecordsForTable($table, null));
+            $records = array_merge($records, $this->findFlaggedRecordsForTable($table, $pageIds));
         }
 
         return $records;
@@ -68,7 +93,7 @@ final class AiMetadataRecordFinder
      * Only tt_content, only on this one page - used to fold "review required"/
      * "reviewed by X on Y" badges into the Page module's content element headers.
      *
-     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}>
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
      */
     public function findFlaggedContentElementsOnPage(int $pageId): array
     {
@@ -76,11 +101,14 @@ final class AiMetadataRecordFinder
             return [];
         }
 
-        return $this->findFlaggedRecordsForTable('tt_content', $pageId);
+        return $this->findFlaggedRecordsForTable('tt_content', [$pageId]);
     }
 
-    /** @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> */
-    private function findFlaggedRecordsForTable(string $table, ?int $pid): array
+    /**
+     * @param list<int>|null $pageIds
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
+     */
+    private function findFlaggedRecordsForTable(string $table, ?array $pageIds): array
     {
         $workspaceId = (int)$this->context->getPropertyFromAspect('workspace', 'id');
         // Raw $GLOBALS['TCA'] access instead of TcaSchemaFactory/TcaSchemaCapability -
@@ -88,9 +116,9 @@ final class AiMetadataRecordFinder
         // v12. ctrl.versioningWS is the exact same underlying flag that capability wraps.
         $isVersionable = (bool)($GLOBALS['TCA'][$table]['ctrl']['versioningWS'] ?? false);
 
-        $records = [];
+        $rows = [];
 
-        foreach ($this->findLiveRows($table, $pid, $isVersionable) as $row) {
+        foreach ($this->findLiveRows($table, $pageIds, $isVersionable) as $row) {
             if ($isVersionable && $workspaceId > 0) {
                 BackendUtility::workspaceOL($table, $row, $workspaceId);
                 if ($row === false) {
@@ -108,26 +136,34 @@ final class AiMetadataRecordFinder
                 }
             }
 
-            $record = $this->buildRecord($table, $row);
-            if ($record !== null) {
-                $records[] = $record;
-            }
+            $rows[] = $row;
         }
 
         if ($isVersionable && $workspaceId > 0) {
-            foreach ($this->findNewInWorkspace($table, $pid, $workspaceId) as $row) {
-                $record = $this->buildRecord($table, $row);
-                if ($record !== null) {
-                    $records[] = $record;
-                }
+            foreach ($this->findNewInWorkspace($table, $pageIds, $workspaceId) as $row) {
+                $rows[] = $row;
+            }
+        }
+
+        // One query for the whole table instead of two per record.
+        $authors = $this->resolveAuthors($table, $rows);
+
+        $records = [];
+        foreach ($rows as $row) {
+            $record = $this->buildRecord($table, $row, $authors[(int)$row['uid']] ?? '');
+            if ($record !== null) {
+                $records[] = $record;
             }
         }
 
         return $records;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function findLiveRows(string $table, ?int $pid, bool $isVersionable): array
+    /**
+     * @param list<int>|null $pageIds
+     * @return list<array<string, mixed>>
+     */
+    private function findLiveRows(string $table, ?array $pageIds, bool $isVersionable): array
     {
         $queryBuilder = $this->connectionPool->getConnectionForTable($table)->createQueryBuilder();
         $queryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
@@ -136,8 +172,12 @@ final class AiMetadataRecordFinder
             ->from($table)
             ->where($queryBuilder->expr()->isNotNull('tx_ailabel_metadata'));
 
-        if ($pid !== null) {
-            $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
+        }
+
+        if ($pageIds !== null) {
+            $this->constrainToPageScope($queryBuilder, $table, $pageIds);
         }
 
         if ($isVersionable) {
@@ -153,9 +193,10 @@ final class AiMetadataRecordFinder
      * Records that only exist as a brand new version inside this workspace - they have
      * no live counterpart yet, so findLiveRows()/workspaceOL() never surfaces them.
      *
+     * @param list<int>|null $pageIds
      * @return list<array<string, mixed>>
      */
-    private function findNewInWorkspace(string $table, ?int $pid, int $workspaceId): array
+    private function findNewInWorkspace(string $table, ?array $pageIds, int $workspaceId): array
     {
         $queryBuilder = $this->connectionPool->getConnectionForTable($table)->createQueryBuilder();
         $queryBuilder
@@ -169,11 +210,109 @@ final class AiMetadataRecordFinder
                 $queryBuilder->expr()->eq('t3ver_state', $queryBuilder->createNamedParameter(1, Connection::PARAM_INT))
             );
 
-        if ($pid !== null) {
-            $queryBuilder->andWhere($queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($pid, Connection::PARAM_INT)));
+        if ($pageIds !== null) {
+            $this->constrainToPageScope($queryBuilder, $table, $pageIds);
+        }
+
+        if (!$this->applyPermissionConstraints($queryBuilder, $table)) {
+            return [];
         }
 
         return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * @param list<int> $pageIds
+     */
+    private function constrainToPageScope(QueryBuilder $queryBuilder, string $table, array $pageIds): void
+    {
+        $column = $table === 'pages' ? 'uid' : 'pid';
+        $queryBuilder->andWhere($queryBuilder->expr()->in(
+            $column,
+            $queryBuilder->createNamedParameter($pageIds, Connection::PARAM_INT_ARRAY)
+        ));
+    }
+
+    /**
+     * Restricts the query to what this user may see, and says whether anything is
+     * visible at all.
+     */
+    private function applyPermissionConstraints(QueryBuilder $queryBuilder, string $table): bool
+    {
+        $backendUser = $this->getBackendUser();
+        if ($backendUser === null) {
+            return false;
+        }
+        if ($backendUser->isAdmin()) {
+            return true;
+        }
+        if (!$backendUser->check('tables_select', $table)) {
+            return false;
+        }
+
+        if ($this->livesOnRootLevelOnly($table)) {
+            // pid is always 0 here, so there is nothing to scope in SQL. File metadata is
+            // checked per row by AiLabelAccessChecker (file mounts and file permissions);
+            // any other root-level table has no boundary here and stays admin-only.
+            return $table === 'sys_file_metadata';
+        }
+
+        $accessiblePageIds = $this->resolveAccessiblePageIds($backendUser);
+        if ($accessiblePageIds === []) {
+            return false;
+        }
+
+        $pageIdParameter = $queryBuilder->createNamedParameter($accessiblePageIds, Connection::PARAM_INT_ARRAY);
+        if ($table !== 'pages') {
+            $queryBuilder->andWhere($queryBuilder->expr()->in('pid', $pageIdParameter));
+
+            return true;
+        }
+
+        // Pages carry access on the record itself. A translation is its own row with its
+        // own uid, and the accessible ids only ever contain default language pages, so it
+        // has to be matched through its parent as well.
+        $pageConstraints = [$queryBuilder->expr()->in('uid', $pageIdParameter)];
+        // Same condition as TcaSchemaCapability::Language, which v12 lacks.
+        $tcaCtrl = $GLOBALS['TCA'][$table]['ctrl'] ?? [];
+        if (isset($tcaCtrl['languageField'], $tcaCtrl['transOrigPointerField'])) {
+            $pageConstraints[] = $queryBuilder->expr()->in($tcaCtrl['transOrigPointerField'], $pageIdParameter);
+        }
+        $queryBuilder->andWhere($queryBuilder->expr()->or(...$pageConstraints));
+
+        return true;
+    }
+
+    /**
+     * Pages reachable from the user's web mounts, or null for an admin. The permission
+     * clause alone is not the same thing: bits can pass on pages outside every mount.
+     *
+     * @return list<int>|null
+     */
+    private function resolveAccessiblePageIds(BackendUserAuthentication $backendUser): ?array
+    {
+        if ($backendUser->isAdmin()) {
+            return null;
+        }
+        if ($this->accessiblePageIds !== null) {
+            return $this->accessiblePageIds;
+        }
+
+        return $this->accessiblePageIds = $this->pageTreeScopeResolver->resolveSubtrees(
+            $backendUser->getWebmounts(),
+            $backendUser
+        );
+    }
+
+    private function livesOnRootLevelOnly(string $table): bool
+    {
+        // ctrl.rootLevel 1 is RootLevelCapability::TYPE_ONLY_ON_ROOTLEVEL, which v12 lacks.
+        return (int)($GLOBALS['TCA'][$table]['ctrl']['rootLevel'] ?? 0) === 1;
+    }
+
+    private function getBackendUser(): ?BackendUserAuthentication
+    {
+        return $GLOBALS['BE_USER'] ?? null;
     }
 
     /**
@@ -186,8 +325,8 @@ final class AiMetadataRecordFinder
      * blob, and filtering on its decoded content isn't portable across
      * MySQL/SQLite/Postgres without per-database JSON path functions.
      *
-     * @param list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}> $records
-     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string}>
+     * @param list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}> $records
+     * @return list<array{table: string, uid: int, pid: int, title: string, metadata: AiMetadata, icon: string, tableLabel: string, author: string, reviewBadge: string, editable: bool}>
      */
     public function filterAndSort(array $records, AiLabelDemand $demand): array
     {
@@ -246,7 +385,9 @@ final class AiMetadataRecordFinder
     }
 
     /**
-     * Site-wide counts across ALL flagged records, ignoring the current demand's filters.
+     * Counts across ALL flagged records the caller passes in, ignoring the current
+     * demand's filters - site-wide if $records came from findFlaggedRecords(null),
+     * or scoped to a page-tree selection if it came from findFlaggedRecords($pageIds).
      *
      * @param list<array{metadata: AiMetadata}> $records
      * @return array{total: int, created: int, modified: int, reviewRequired: int, reviewed: int}
@@ -295,10 +436,13 @@ final class AiMetadataRecordFinder
     }
 
     /** @param array<string, mixed> $row */
-    private function buildRecord(string $table, array $row): ?array
+    private function buildRecord(string $table, array $row, string $author): ?array
     {
         $metadata = AiMetadata::fromJsonString($row['tx_ailabel_metadata'] ?? null);
         if (!$metadata->isFlagged()) {
+            return null;
+        }
+        if (!$this->accessChecker->isReadable($table, $row)) {
             return null;
         }
 
@@ -308,7 +452,7 @@ final class AiMetadataRecordFinder
             'pid' => (int)$row['pid'],
             'title' => BackendUtility::getRecordTitle($table, $row),
             'metadata' => $metadata,
-            'author' => $this->resolveAuthor($table, $row),
+            'author' => $author,
             // Resolves per-row overlays (hidden, workspace state, ...), same as
             // any other backend record listing. Built here rather than in the
             // Fluid template since IconFactory needs the actual DB row, which
@@ -323,6 +467,7 @@ final class AiMetadataRecordFinder
             // built here instead of the Fluid template so the "review required" vs
             // "reviewed by X on Y" wording/color can't drift apart between the two.
             'reviewBadge' => $this->badgeFactory->getBadge($metadata),
+            'editable' => $this->accessChecker->isEditable($table, $row),
         ];
 
         $event = new AfterRecordIsBuiltEvent($record, $row);
@@ -331,18 +476,73 @@ final class AiMetadataRecordFinder
         return $event->getRecord();
     }
 
-    /** @param array<string, mixed> $row */
-    private function resolveAuthor(string $table, array $row): string
+    /**
+     * Creating user per record uid, from the record's insert history entry as
+     * RecordHistory::getCreationInformationForRecord() reads it, once per table.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<int, string>
+     */
+    private function resolveAuthors(string $table, array $rows): array
     {
-        $recordHistory = GeneralUtility::makeInstance(RecordHistory::class);
-        $ownerInformation = $recordHistory->getCreationInformationForRecord($table, $row);
-        $ownerUid = (int)(is_array($ownerInformation) && ($ownerInformation['usertype'] ?? '') === 'BE' ? $ownerInformation['userid'] : 0);
-        if ($ownerUid <= 0) {
-            return '';
+        $recordUids = array_map(static fn (array $row): int => (int)$row['uid'], $rows);
+        if ($recordUids === []) {
+            return [];
         }
 
-        $creatorRecord = BackendUtility::getRecord('be_users', $ownerUid);
-        return ($creatorRecord['realName'] ?? '') ?: ($creatorRecord['username'] ?? '') ?: '';
+        $creatorUidPerRecord = [];
+        $queryBuilder = $this->connectionPool->getQueryBuilderForTable('sys_history');
+        $queryBuilder->getRestrictions()->removeAll();
+        // Chunked to stay under the placeholder limit.
+        foreach (array_chunk($recordUids, 1000) as $recordUidChunk) {
+            $historyEntries = $queryBuilder
+                ->select('recuid', 'userid', 'usertype')
+                ->from('sys_history')
+                ->where(
+                    $queryBuilder->expr()->eq('tablename', $queryBuilder->createNamedParameter($table)),
+                    $queryBuilder->expr()->in('recuid', $queryBuilder->createNamedParameter($recordUidChunk, Connection::PARAM_INT_ARRAY)),
+                    $queryBuilder->expr()->eq('actiontype', $queryBuilder->createNamedParameter(RecordHistoryStore::ACTION_ADD, Connection::PARAM_INT))
+                )
+                ->orderBy('uid')
+                ->executeQuery()
+                ->fetchAllAssociative();
+
+            foreach ($historyEntries as $historyEntry) {
+                $recordUid = (int)$historyEntry['recuid'];
+                // The first insert entry wins, matching getCreationInformationForRecord()'s
+                // own setMaxResults(1).
+                if (isset($creatorUidPerRecord[$recordUid]) || ($historyEntry['usertype'] ?? '') !== 'BE') {
+                    continue;
+                }
+                $creatorUidPerRecord[$recordUid] = (int)$historyEntry['userid'];
+            }
+        }
+
+        $creatorUids = array_values(array_unique(array_filter($creatorUidPerRecord)));
+        if ($creatorUids === []) {
+            return [];
+        }
+
+        $usersQueryBuilder = $this->connectionPool->getQueryBuilderForTable('be_users');
+        $usersQueryBuilder->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $users = $usersQueryBuilder
+            ->select('uid', 'username', 'realName')
+            ->from('be_users')
+            ->where($usersQueryBuilder->expr()->in('uid', $usersQueryBuilder->createNamedParameter($creatorUids, Connection::PARAM_INT_ARRAY)))
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $namePerUser = [];
+        foreach ($users as $user) {
+            $namePerUser[(int)$user['uid']] = ((string)($user['realName'] ?? '')) ?: ((string)($user['username'] ?? ''));
+        }
+
+        $authors = [];
+        foreach ($creatorUidPerRecord as $recordUid => $creatorUid) {
+            $authors[$recordUid] = $namePerUser[$creatorUid] ?? '';
+        }
+
+        return $authors;
     }
 
     // Raw $GLOBALS['TCA'] instead of TcaSchemaFactory (see findFlaggedRecordsForTable()

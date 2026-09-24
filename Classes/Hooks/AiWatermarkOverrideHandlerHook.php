@@ -14,15 +14,18 @@ namespace B13\AiLabel\Hooks;
 
 use B13\AiLabel\Domain\Enum\WatermarkColor;
 use B13\AiLabel\Domain\Enum\WatermarkPosition;
+use B13\AiLabel\Domain\Enum\WatermarkWidth;
 use B13\AiLabel\Domain\Model\WatermarkOverride;
 use B13\AiLabel\Imaging\ProcessedFileInvalidator;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 
-// Folds tx_ailabel_watermark_position / tx_ailabel_watermark_color into the
-// tx_ailabel_watermark JSON column on sys_file_metadata - same virtual-field-to-JSON
-// pattern as AiMetaDataHandlerHook, but simpler: no review-workflow business rule,
-// so whatever was submitted just wins, no AiLabelApi/nested-DataHandler needed.
+// Folds tx_ailabel_watermark_position / tx_ailabel_watermark_color /
+// tx_ailabel_watermark_width into the tx_ailabel_watermark JSON column on
+// sys_file_metadata - same virtual-field-to-JSON pattern as AiMetaDataHandlerHook,
+// but simpler: no review-workflow business rule, so whatever was submitted just
+// wins, no AiLabelApi/nested-DataHandler needed.
 #[Autoconfigure(public: true)]
 final class AiWatermarkOverrideHandlerHook
 {
@@ -44,14 +47,21 @@ final class AiWatermarkOverrideHandlerHook
         if (
             !array_key_exists('tx_ailabel_watermark_position', $incomingFieldArray)
             && !array_key_exists('tx_ailabel_watermark_color', $incomingFieldArray)
+            && !array_key_exists('tx_ailabel_watermark_width', $incomingFieldArray)
         ) {
             return;
         }
 
         $position = WatermarkPosition::tryFrom((string)($incomingFieldArray['tx_ailabel_watermark_position'] ?? ''));
         $color = WatermarkColor::tryFrom((string)($incomingFieldArray['tx_ailabel_watermark_color'] ?? ''));
-        $this->pendingValues[$table . ':' . $id] = (new WatermarkOverride())->withPosition($position)->withColor($color);
-        unset($incomingFieldArray['tx_ailabel_watermark_position'], $incomingFieldArray['tx_ailabel_watermark_color']);
+        $rawWidth = $incomingFieldArray['tx_ailabel_watermark_width'] ?? '';
+        $width = is_numeric($rawWidth) ? WatermarkWidth::tryFrom((int)$rawWidth) : null;
+        $this->pendingValues[$table . ':' . $id] = (new WatermarkOverride())->withPosition($position)->withColor($color)->withWidth($width);
+        unset(
+            $incomingFieldArray['tx_ailabel_watermark_position'],
+            $incomingFieldArray['tx_ailabel_watermark_color'],
+            $incomingFieldArray['tx_ailabel_watermark_width']
+        );
     }
 
     public function processDatamap_postProcessFieldArray(
@@ -61,9 +71,22 @@ final class AiWatermarkOverrideHandlerHook
         array &$fieldArray,
         DataHandler $dataHandler
     ): void {
+        // Called for every table DataHandler saves, and only sys_file_metadata ever
+        // carries a watermark override - anything else has no t3ver_oid to read either.
+        if ($table !== 'sys_file_metadata' || $this->pendingValues === []) {
+            return;
+        }
+
         $key = $table . ':' . $id;
         if (!isset($this->pendingValues[$key])) {
-            return;
+            $liveId = $this->resolveLiveId($table, (int)$id);
+            if ($liveId === 0) {
+                return;
+            }
+            $key = $table . ':' . $liveId;
+            if (!isset($this->pendingValues[$key])) {
+                return;
+            }
         }
         $override = $this->pendingValues[$key];
         unset($this->pendingValues[$key]);
@@ -73,8 +96,17 @@ final class AiWatermarkOverrideHandlerHook
         // FAL caches processed files on keys that don't change when only the
         // override does - an update has to flush them, or the stale render stays.
         // New records have no processed variants yet.
-        if ($status === 'update' && $table === 'sys_file_metadata') {
+        if ($status === 'update') {
             $this->processedFileInvalidator->invalidateForFileMetadata((int)$id);
         }
+    }
+
+    /**
+     * In a workspace the pre hook is called with the live uid and the post hook with
+     * the version's, so the stashed value is mapped back through t3ver_oid.
+     */
+    private function resolveLiveId(string $table, int $id): int
+    {
+        return (int)(BackendUtility::getRecord($table, $id, 't3ver_oid')['t3ver_oid'] ?? 0);
     }
 }

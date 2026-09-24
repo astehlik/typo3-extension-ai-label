@@ -12,7 +12,9 @@ namespace B13\AiLabel\Tests\Functional\Imaging;
  * of the License, or any later version.
  */
 
+use B13\AiLabel\Domain\Enum\WatermarkWidth;
 use B13\AiLabel\Imaging\AiWatermark;
+use B13\AiLabel\Imaging\ProcessedFileInvalidator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Core\Environment;
@@ -185,11 +187,98 @@ final class AiWatermarkTest extends FunctionalTestCase
         return $this->averageBrightness($filePath, 445, 408, 125, 17);
     }
 
+    // Left of where the small (80px) badge's left edge sits (582 - 80 = 502, minus the
+    // 18px margin already baked into that 582), but still inside the regular/capped
+    // (150px) badge's own left portion - so this strip is only ever covered by the wider
+    // badge. Same vertical band as bottomRightCornerBrightness(), since width alone
+    // shouldn't move the badge's vertical position.
+    private function outsideShrunkBadgeBrightness(string $filePath): float
+    {
+        return $this->averageBrightness($filePath, 445, 408, 50, 17);
+    }
+
     private function processedFilePath(int $fileUid): string
     {
         $file = $this->get(ResourceFactory::class)->getFileObject($fileUid);
         $processedFile = $file->process(ProcessedFile::CONTEXT_IMAGECROPSCALEMASK, ['width' => 600]);
         return $processedFile->getForLocalProcessing(false);
+    }
+
+    // The fixture image is 800px wide, so asking for 800 leaves FAL nothing to scale -
+    // the case a hero image rendered at its own dimensions ends up in.
+    private function processedFileAtNativeWidth(int $fileUid): ProcessedFile
+    {
+        return $this->get(ResourceFactory::class)->getFileObject($fileUid)
+            ->process(ProcessedFile::CONTEXT_IMAGECROPSCALEMASK, ['width' => 800]);
+    }
+
+    /**
+     * An image that needs no scaling gets a processed file that "uses the original file":
+     * one row, pointing at the editor's own asset. Invalidation must drop that row, or
+     * AbstractTask::fileNeedsProcessing() keeps returning false, AiWatermarkProcessor is
+     * never called again, and the file is served unmarked for good - which is what
+     * happens to every image that was already rendered before it was flagged, or before
+     * "baked" was switched on.
+     */
+    #[Test]
+    public function aVariantRenderedBeforeTheModeWasEnabledIsReplacedByAMarkedOne(): void
+    {
+        // 1. Rendered while the marker mode is still off.
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['imageMarker'] = 'off';
+        self::assertTrue(
+            $this->processedFileAtNativeWidth(1)->usesOriginalFile(),
+            'sanity: an image that needs no scaling is served straight from the original'
+        );
+
+        // 2. "baked" is switched on and the variants are flushed.
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['imageMarker'] = 'baked';
+        $this->get(ProcessedFileInvalidator::class)->invalidateForAllFlaggedFiles();
+
+        // 3. The next render is a real processed file carrying the badge. Both fixture
+        //    files hold the same picture, so the flagged one differing means a badge.
+        $marked = $this->processedFileAtNativeWidth(1);
+        self::assertFalse($marked->usesOriginalFile());
+        self::assertNotSame(
+            sha1_file($this->processedFileAtNativeWidth(2)->getForLocalProcessing(false)),
+            sha1_file($marked->getForLocalProcessing(false))
+        );
+    }
+
+    #[Test]
+    public function badgeWidthUsesTheConfiguredGlobalWidth(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['watermarkWidth'] = '80';
+        self::assertSame(80, $this->get(AiWatermark::class)->getBadgeWidth(5120));
+    }
+
+    #[Test]
+    public function badgeWidthPerFileOverrideBeatsTheGlobalDefault(): void
+    {
+        self::assertSame(80, $this->get(AiWatermark::class)->getBadgeWidth(5120, WatermarkWidth::Small));
+    }
+
+    #[Test]
+    public function badgeShrinksToTheConfiguredGlobalWidth(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['watermarkWidth'] = '80';
+
+        $flagged = $this->processedFilePath(1);
+        $plain = $this->processedFilePath(2);
+
+        // Still inside the shrunk badge's own footprint, near the bottom-right corner -
+        // confirms a badge was actually rendered, just a narrower one.
+        self::assertLessThan(
+            $this->bottomRightCornerBrightness($plain) - 5,
+            $this->bottomRightCornerBrightness($flagged)
+        );
+        // A strip the regular-width badge would have covered, but the shrunk one
+        // doesn't reach - stays untouched once the badge is actually narrower.
+        self::assertEqualsWithDelta(
+            $this->outsideShrunkBadgeBrightness($plain),
+            $this->outsideShrunkBadgeBrightness($flagged),
+            2.0,
+            'The area outside the shrunk badge should stay untouched.'
+        );
     }
 
     #[Test]

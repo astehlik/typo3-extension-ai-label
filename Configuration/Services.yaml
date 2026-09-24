@@ -44,6 +44,10 @@ services:
       - { name: 'event.listener', identifier: 'ai-label/after-file-replaced', event: 'TYPO3\CMS\Core\Resource\Event\AfterFileReplacedEvent' }
       - { name: 'event.listener', identifier: 'ai-label/after-file-contents-set', event: 'TYPO3\CMS\Core\Resource\Event\AfterFileContentsSetEvent' }
 
+  B13\AiLabel\EventListener\RepairMetadataAfterPublish:
+    tags:
+      - { name: 'event.listener', identifier: 'ai-label/repair-metadata-after-publish' }
+
   B13\AiLabel\EventListener\MarkFlaggedPageInLayoutModule:
     tags:
       - { name: 'event.listener', identifier: 'ai-label/mark-flagged-page-in-layout' }
