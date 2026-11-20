@@ -14,6 +14,7 @@ namespace B13\AiLabel\Imaging;
 
 use B13\AiLabel\Configuration\ImageMarkerSettings;
 use B13\AiLabel\Domain\Enum\AiOrigin;
+use B13\AiLabel\Domain\Enum\ImageMarkerMode;
 use B13\AiLabel\Domain\Enum\WatermarkColor;
 use B13\AiLabel\Domain\Enum\WatermarkPosition;
 use B13\AiLabel\Domain\Enum\WatermarkWidth;
@@ -72,6 +73,32 @@ final class AiWatermark implements LoggerAwareInterface
         return $this->getOrigin($sourceFile) !== AiOrigin::Human;
     }
 
+    public function getBakedOrigin(FileInterface $file): ?AiOrigin
+    {
+        if ($this->settings->getMode() !== ImageMarkerMode::Baked || !$this->appliesTo($file)) {
+            return null;
+        }
+
+        return $this->getOrigin($file);
+    }
+
+    // Per-file override before the global default. The AiLabel partial reads the color
+    // too, so both markers of one file look the same.
+    public function getColor(FileInterface $file): WatermarkColor
+    {
+        return $this->getWatermarkOverride($file)->getColor() ?? $this->settings->getWatermarkColor();
+    }
+
+    public function getPosition(FileInterface $file): WatermarkPosition
+    {
+        return $this->getWatermarkOverride($file)->getPosition() ?? $this->settings->getWatermarkPosition();
+    }
+
+    public function getWidth(FileInterface $file): WatermarkWidth
+    {
+        return $this->getWatermarkOverride($file)->getWidth() ?? $this->settings->getWatermarkWidth();
+    }
+
     public function applyTo(ProcessedFile $processedFile, FileInterface $sourceFile, ?string $processedFileName = null): void
     {
         $origin = $this->getOrigin($sourceFile);
@@ -79,10 +106,9 @@ final class AiWatermark implements LoggerAwareInterface
             return;
         }
 
-        $override = $this->getWatermarkOverride($sourceFile);
-        $color = $override->getColor() ?? $this->settings->getWatermarkColor();
-        $position = $override->getPosition() ?? $this->settings->getWatermarkPosition();
-        $targetWidth = $override->getWidth() ?? $this->settings->getWatermarkWidth();
+        $color = $this->getColor($sourceFile);
+        $position = $this->getPosition($sourceFile);
+        $targetWidth = $this->getWidth($sourceFile);
 
         $badgeFile = $this->getBadgeFile($origin, $color);
         if ($badgeFile === null) {
@@ -203,7 +229,7 @@ final class AiWatermark implements LoggerAwareInterface
 
     // Per-file override of the global watermarkPosition/watermarkColor defaults -
     // same hasProperty()/getProperty() pattern as getOrigin().
-    private function getWatermarkOverride(FileInterface $file): WatermarkOverride
+    public function getWatermarkOverride(FileInterface $file): WatermarkOverride
     {
         if (!$file->hasProperty('tx_ailabel_watermark')) {
             return WatermarkOverride::fromJsonString(null);
@@ -224,7 +250,7 @@ final class AiWatermark implements LoggerAwareInterface
             return null;
         }
 
-        $absolutePath = GeneralUtility::getFileAbsFileName('EXT:ai_label/Resources/Public/Icons/' . $name);
+        $absolutePath = GeneralUtility::getFileAbsFileName($this->settings->getIconPath() . $name);
 
         return $absolutePath !== '' && file_exists($absolutePath) ? $absolutePath : null;
     }

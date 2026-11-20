@@ -311,8 +311,14 @@ The `AiLabel` partial (`Resources/Private/Partials/AiLabel.html`):
 - Outputs one of eight bundled SVG icons
   (`Resources/Public/Icons/ai_generated_*.svg` / `ai_modified_*.svg` -
   `black`/`white` x plain/`_transparent`, selected via the optional `variant`
-  argument, default `black`) via `f:image` - no image-processing/asset-pipeline
+  argument) via `f:image` - no image-processing/asset-pipeline
   dependency beyond core Fluid.
+- Picks the color like this: a `record` uses `variant`, default `black`. A
+  `file` uses the same color as the badge burned into it (see
+  [Files / images: watermark settings](#files--images-watermark-settings)):
+  the file's own watermark color first, then `variant`, then the global
+  `watermarkColor`. A file's color keeps the `_transparent` of the requested
+  variant; a project variant of your own (see `iconPath`) is never replaced.
 - Ships its own `<f:asset.css>` for the `.b_ai-label`/`.b_ai-label__icon`
   classes, positioned entirely through CSS custom properties
   (`--ai-label-position`, `--ai-label-inset`, `--ai-label-margin`,
@@ -376,21 +382,32 @@ cached like any other processed image. Things to know:
   edit form gets a "Watermark position"/"Watermark color"/"Watermark width"
   override (visible only in `baked` mode) to set a different corner/color/width
   for that one file; leaving any of them at "Inherit global setting" uses the
-  site-wide default.
+  site-wide default. The `AiLabel` partial's marker for that file uses the same
+  color, so both markers match.
 - Only *processed* images are marked - which includes images rendered at their
   own dimensions: `<f:image image="{file}" width="1920" />` on a 1920px wide
   original still gets the badge, even though there is nothing to scale. What is
   served unmarked is a genuinely direct link to the file, e.g. `{file.publicUrl}`
   or a plain `<img src="{f:uri.resource()}" />`, since no processing happens at
   all there.
+- **The alt text gets the label, too.** `{ailabel:alt(file: file)}` returns the
+  image's alt text with "(AI generated)"/"(AI modified)" (localized, see
+  `alt.aiLabel.*` in `locallang.xlf`) appended whenever the image carries the
+  badge; an empty alt becomes the label alone. An alt text overridden on the
+  file reference is respected. fluid_styled_content's images get this
+  automatically through this extension's `Media/Rendering/Image` partial; in
+  your own templates, or with b13/picture's `i:image`, use it directly:
+  ```html
+  <f:image image="{image}" width="800" alt="{ailabel:alt(file: image)}" />
+  ```
 - Changing a file's AI flag, or its per-file watermark override, flushes that
   file's processed variants, so the change takes effect on the next render. A
   change to one of the *global* defaults does not - see the note below.
 
 > **Flush the processed files after changing a global setting.** FAL caches
 > processed images on the original file, the task and its configuration - none of
-> which change when you flip `imageMarker`, `watermarkPosition`, `watermarkColor`
-> or `watermarkWidth`, because those live in the extension configuration rather
+> which change when you flip `imageMarker`, `watermarkPosition`, `watermarkColor`,
+> `watermarkWidth` or `iconPath`, because those live in the extension configuration rather
 > than on a record. Variants rendered before the change therefore stay exactly as
 > they were: unmarked if you just enabled `baked`, carrying the old corner, colour
 > or size if you changed one of those, and - after switching from `baked` to
@@ -420,10 +437,31 @@ the exclusions above fall back to the element marker alone.
 
 ### Overriding the default markup/icons
 
-Projects that want their own icon set, markup, or positioning can override the
-partial with a higher-priority `partialRootPaths` entry pointing to their own
-`AiLabel.html` (same filename, same argument contract - optional `file`,
-`record`, `variant`):
+**Own icon set**: set the extension configuration `iconPath` (default
+`EXT:ai_label/Resources/Public/Icons/`) to a public folder of your own. It is the
+one setting for both markers - the `AiLabel` partial reads it through
+`{ailabel:iconPath()}`, the badge burned into images in `baked` mode reads it
+directly. The folder has to contain the same file names as the bundled one:
+
+- `ai_generated_<variant>.svg` / `ai_modified_<variant>.svg` for every `variant`
+  your templates pass (default `black`)
+- `ai_generated_black.png`, `ai_generated_white.png`, `ai_modified_black.png`,
+  `ai_modified_white.png` for `baked` mode
+
+```php
+// config/system/settings.php
+'EXTENSIONS' => [
+    'ai_label' => [
+        'iconPath' => 'EXT:my_sitepackage/Resources/Public/AiLabel/',
+    ],
+],
+```
+
+Run `vendor/bin/typo3 ailabel:flushWatermarks` afterwards, see the note above.
+
+**Own markup or positioning**: override the partial with a higher-priority
+`partialRootPaths` entry pointing to your own `AiLabel.html` (same filename, same
+argument contract - optional `file`, `record`, `variant`):
 
 ```typoscript
 lib.contentElement {
@@ -563,6 +601,35 @@ lives on `sys_file_metadata`, not on the file reference itself):
 Both ViewHelpers render nothing themselves when used with `as` - they only
 assign the variable. Without `as`, they return the `AiMetadata` object
 directly, so they can be used inline as shown above.
+
+### Files / images: watermark settings
+
+`{ailabel:watermark(file: image)}` returns the badge settings of a file exactly
+as `baked` mode burns them in - the per-file override from the file's
+metadata first, the global extension configuration second:
+
+| Key | Value |
+| --- | --- |
+| `baked` | `true` if the badge is actually burned into this file's processed images (`baked` mode, ImageMagick, raster image, flagged) |
+| `color` | `black` / `white` |
+| `position` | `top-left` / `top-right` / `bottom-left` / `bottom-right` |
+| `width` | `160` / `80` |
+| `variant` | The icon variant for a marker that has to match the badge. Pass the variant your template wants as `variant` - the file's own color still wins, see the `AiLabel` partial above |
+
+The `AiLabel` partial uses it for every `file`. Use it directly when your own
+markup has to react to the badge, e.g. a background image whose visible area
+depends on the viewport:
+
+```html
+<html xmlns:ailabel="http://typo3.org/ns/B13/AiLabel/ViewHelpers" data-namespace-typo3-fluid="true">
+
+<f:variable name="watermark" value="{ailabel:watermark(file: image)}" />
+<div class="stage" data-ai-badge="{f:if(condition: watermark.baked, then: watermark.position)}">
+    <f:render partial="AiLabel" arguments="{file: image}" />
+</div>
+
+</html>
+```
 
 ## Credits
 
