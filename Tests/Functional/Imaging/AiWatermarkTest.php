@@ -251,6 +251,37 @@ final class AiWatermarkTest extends FunctionalTestCase
         self::assertSame(80, $this->get(AiWatermark::class)->getBadgeWidth(5120));
     }
 
+    public static function proportionalBadgeWidthDataProvider(): array
+    {
+        return [
+            'small image' => [12, 400, WatermarkWidth::Regular, 48],
+            'medium image' => [12, 1200, WatermarkWidth::Regular, 144],
+            'large image grows past the fixed width' => [12, 2400, WatermarkWidth::Regular, 288],
+            'small width halves the share' => [12, 2400, WatermarkWidth::Small, 144],
+            'other percentage' => [20, 1000, WatermarkWidth::Regular, 200],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('proportionalBadgeWidthDataProvider')]
+    public function proportionalBadgeWidthFollowsTheImageWidth(int $percent, int $imageWidth, WatermarkWidth $targetWidth, int $expectedBadgeWidth): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['watermarkRelativeWidth'] = (string)$percent;
+        self::assertSame($expectedBadgeWidth, $this->get(AiWatermark::class)->getBadgeWidth($imageWidth, $targetWidth));
+    }
+
+    #[Test]
+    public function proportionalBadgeIsBurnedIn(): void
+    {
+        // 25% of the 600px variant matches the fixed badge's footprint the sample area is built for.
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['watermarkRelativeWidth'] = '25';
+
+        self::assertLessThan(
+            $this->bottomRightCornerBrightness($this->processedFilePath(2)) - 5,
+            $this->bottomRightCornerBrightness($this->processedFilePath(1))
+        );
+    }
+
     #[Test]
     public function badgeWidthPerFileOverrideBeatsTheGlobalDefault(): void
     {

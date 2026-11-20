@@ -54,6 +54,9 @@
             <trans-unit id="config.watermarkWidth">
                 <source>Default width of the badge burned into the image ("Burned into the image" mode only), never enlarged beyond it. Can be overridden per file. 160px matches the previous, fixed behaviour.</source>
             </trans-unit>
+            <trans-unit id="config.watermarkRelativeWidth">
+                <source>Badge width in percent of the image width, 1 to 50 ("Burned into the image" mode only). 0 keeps the fixed pixel width above, so a large image carries a relatively small badge and differently sized crops of one image show different badge sizes. With a percentage the badge looks the same size in every crop and srcset variant shown in the same place; 12 comes close to the fixed 160px on a 1200px image. The 80px width, globally or per file, halves the percentage. 0 matches the previous behaviour.</source>
+            </trans-unit>
             <trans-unit id="config.iconPath">
                 <source>Folder with the AI badge icons, used by the frontend marker and the badge burned into the image. It has to contain ai_generated_&lt;variant&gt;.svg and ai_modified_&lt;variant&gt;.svg, plus ai_generated_black/white.png and ai_modified_black/white.png for "Burned into the image" mode. Run "ailabel:flushWatermarks" after changing it.</source>
             </trans-unit>

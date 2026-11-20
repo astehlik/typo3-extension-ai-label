@@ -368,9 +368,16 @@ cached like any other processed image. Things to know:
   operator, so sites on GraphicsMagick silently keep the content element marker.
 - **SVGs are skipped** (they are never rasterised) as are images narrower than
   160px, where the badge would be unreadable anyway.
-- The badge is a constant width and is never enlarged beyond that, so it stays
-  a discreet mark rather than growing with the image. Only on images too small
-  to carry it does it shrink, to at most a quarter of the image width.
+- By default the badge is a constant width and is never enlarged beyond that, so
+  it stays a discreet mark rather than growing with the image. Only on images too
+  small to carry it does it shrink, to at most a quarter of the image width. The
+  catch: two crops of different pixel sizes shown in the same slot (slider
+  slides, srcset candidates) end up with visibly different badges. Set
+  `watermarkRelativeWidth` to a percentage (1-50) to size the badge relative to
+  the image width instead, with a 2% margin, so it looks the same everywhere. 12
+  comes close to the fixed 160px on a 1200px image; `watermarkWidth = 80`, or the
+  per-file "80px" override, halves the percentage. The 600px badge artwork is
+  never enlarged, so on images wider than 5000px the badge stays at 600px.
 - **Position, color and width are configurable.** Three extension configuration
   settings, `watermarkPosition` (`top-left`/`top-right`/`bottom-left`/
   `bottom-right`, default `bottom-right`), `watermarkColor` (`black`/`white`,
@@ -407,7 +414,7 @@ cached like any other processed image. Things to know:
 > **Flush the processed files after changing a global setting.** FAL caches
 > processed images on the original file, the task and its configuration - none of
 > which change when you flip `imageMarker`, `watermarkPosition`, `watermarkColor`,
-> `watermarkWidth` or `iconPath`, because those live in the extension configuration rather
+> `watermarkWidth`, `watermarkRelativeWidth` or `iconPath`, because those live in the extension configuration rather
 > than on a record. Variants rendered before the change therefore stay exactly as
 > they were: unmarked if you just enabled `baked`, carrying the old corner, colour
 > or size if you changed one of those, and - after switching from `baked` to

@@ -53,6 +53,8 @@ final class AiWatermark implements LoggerAwareInterface
     private const MARGIN_RATIO = 0.03;
     private const MAX_MARGIN = 24;
 
+    private const PROPORTIONAL_MARGIN_RATIO = 0.02;
+
     // Below this the badge would be unreadable anyway, and a mark nobody can read
     // discloses nothing - such images fall back to the content element marker.
     private const MIN_IMAGE_WIDTH = 160;
@@ -159,24 +161,40 @@ final class AiWatermark implements LoggerAwareInterface
     }
 
     /**
-     * The sizing rule: a constant target width, never exceeded, so the badge cannot grow
-     * with the image - only pictures too small to carry it shrink the badge, and then to
-     * at most MAX_RELATIVE_WIDTH of their own width. $targetWidth defaults to the
-     * globally configured width (ImageMarkerSettings::getWatermarkWidth()) so callers that
-     * have no per-file override to resolve - namely the tests - can omit it entirely.
+     * Fixed by default: a constant target width, never exceeded, so the badge cannot grow
+     * with the image - only pictures too small to carry it shrink the badge, to at most
+     * MAX_RELATIVE_WIDTH of their own width. With watermarkRelativeWidth set, that share of
+     * the image width instead, halved for WatermarkWidth::Small. $targetWidth defaults to
+     * the global setting, so callers without a per-file override (the tests) can omit it.
      *
      * Public because it is the one piece of behaviour here that can be asserted without
      * an image processor installed, and it has regressed once already.
      */
     public function getBadgeWidth(int $imageWidth, ?WatermarkWidth $targetWidth = null): int
     {
-        return min(($targetWidth ?? $this->settings->getWatermarkWidth())->value, (int)round($imageWidth * self::MAX_RELATIVE_WIDTH));
+        $targetWidth ??= $this->settings->getWatermarkWidth();
+        $relativeWidth = $this->settings->getWatermarkRelativeWidth();
+        if ($relativeWidth > 0) {
+            $scale = $targetWidth->value / WatermarkWidth::Regular->value;
+            return (int)round($imageWidth * $relativeWidth / 100 * $scale);
+        }
+
+        return min($targetWidth->value, (int)round($imageWidth * self::MAX_RELATIVE_WIDTH));
+    }
+
+    private function getMargin(int $imageWidth): int
+    {
+        if ($this->settings->getWatermarkRelativeWidth() > 0) {
+            return (int)round($imageWidth * self::PROPORTIONAL_MARGIN_RATIO);
+        }
+
+        return min(self::MAX_MARGIN, max(4, (int)round($imageWidth * self::MARGIN_RATIO)));
     }
 
     private function composite(string $sourceFile, string $badgeFile, string $targetFile, int $imageWidth, WatermarkPosition $position, WatermarkWidth $targetWidth): bool
     {
         $badgeWidth = $this->getBadgeWidth($imageWidth, $targetWidth);
-        $margin = min(self::MAX_MARGIN, max(4, (int)round($imageWidth * self::MARGIN_RATIO)));
+        $margin = $this->getMargin($imageWidth);
         $gravity = match ($position) {
             WatermarkPosition::TopLeft => 'NorthWest',
             WatermarkPosition::TopRight => 'NorthEast',

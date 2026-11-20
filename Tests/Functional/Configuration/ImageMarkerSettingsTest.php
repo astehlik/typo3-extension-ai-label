@@ -161,6 +161,33 @@ final class ImageMarkerSettingsTest extends FunctionalTestCase
     // became configurable - a closed set of two options, so anything outside {160, 80}
     // (non-numeric, or a number that just isn't one of the two allowed sizes) falls
     // back the same way an unrecognised position/color would.
+    public static function watermarkRelativeWidthDataProvider(): array
+    {
+        return [
+            'fixed' => ['0', 0],
+            'percentage' => ['12', 12],
+            'upper bound' => ['50', 50],
+            'above the upper bound falls back to fixed' => ['51', 0],
+            'negative falls back to fixed' => ['-5', 0],
+            'non-numeric falls back to fixed' => ['something-else', 0],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('watermarkRelativeWidthDataProvider')]
+    public function configuredWatermarkRelativeWidthIsResolved(string $configured, int $expected): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']['watermarkRelativeWidth'] = $configured;
+        self::assertSame($expected, $this->get(ImageMarkerSettings::class)->getWatermarkRelativeWidth());
+    }
+
+    #[Test]
+    public function aMissingWatermarkRelativeWidthConfigurationFallsBackToFixed(): void
+    {
+        unset($GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['ai_label']);
+        self::assertSame(0, $this->get(ImageMarkerSettings::class)->getWatermarkRelativeWidth());
+    }
+
     #[Test]
     public function aNonNumericWatermarkWidthFallsBackToRegular(): void
     {

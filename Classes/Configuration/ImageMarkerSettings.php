@@ -24,6 +24,8 @@ use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
 // which also runs outside any site context (backend thumbnails, CLI, scheduler).
 final class ImageMarkerSettings
 {
+    private const MAX_WATERMARK_RELATIVE_WIDTH = 50;
+
     private const DEFAULT_ICON_PATH = 'EXT:ai_label/Resources/Public/Icons/';
 
     public function __construct(private readonly ExtensionConfiguration $extensionConfiguration)
@@ -76,6 +78,21 @@ final class ImageMarkerSettings
         }
 
         return (is_numeric($value) ? WatermarkWidth::tryFrom((int)$value) : null) ?? WatermarkWidth::Regular;
+    }
+
+    /**
+     * Badge width in percent of the image width, 0 for the fixed pixel width.
+     */
+    public function getWatermarkRelativeWidth(): int
+    {
+        try {
+            $value = $this->extensionConfiguration->get('ai_label', 'watermarkRelativeWidth');
+        } catch (ExtensionConfigurationExtensionNotConfiguredException|ExtensionConfigurationPathDoesNotExistException) {
+            return 0;
+        }
+        $percent = is_numeric($value) ? (int)$value : 0;
+
+        return $percent >= 1 && $percent <= self::MAX_WATERMARK_RELATIVE_WIDTH ? $percent : 0;
     }
 
     public function getIconPath(): string
